@@ -85,6 +85,17 @@
           <para>Print a short help text and exit.</para>
         </listitem>
       </varlistentry>
+      <varlistentry>
+        <term><option>-V</option></term>
+        <term><option>--version</option></term>
+        <listitem>
+          <para>Print version information and exit. When combined with
+                <option>--verbose</option>, additional build information is shown
+                including compilation date and time, and enabled build options
+                (DRM 2D/3D support, FBDEV support, Pango font support).</para>
+        </listitem>
+      </varlistentry>
+
 
       <varlistentry>
         <term><option>-v</option></term>
