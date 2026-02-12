@@ -29,6 +29,10 @@ option('font_unifont', type: 'feature', value: 'auto',
 option('font_pango', type: 'feature', value: 'auto',
   description: 'pango font backend')
 
+# input methods
+option('hangul', type: 'feature', value: 'auto',
+  description: 'Hangul (Korean) input support using libhangul')
+
 # kmscon sessions
 option('session_dummy', type: 'feature', value: 'auto',
   description: 'dummy session')

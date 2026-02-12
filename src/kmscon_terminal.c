@@ -48,6 +48,10 @@
 #include "uterm_input.h"
 #include "uterm_video.h"
 
+#ifdef BUILD_ENABLE_HANGUL
+#include <hangul.h>
+#endif
+
 #define LOG_SUBSYSTEM "terminal"
 
 struct screen {
@@ -96,6 +100,12 @@ struct kmscon_terminal {
 	struct kmscon_font *bold_font;
 
 	struct kmscon_pointer pointer;
+
+#ifdef BUILD_ENABLE_HANGUL
+	HangulInputContext *hangul_ic;
+	bool hangul_mode;
+	uint32_t preedit_ch;
+#endif
 };
 
 static int font_set(struct kmscon_terminal *term);
@@ -126,6 +136,32 @@ static void draw_pointer(struct screen *scr)
 	kmscon_text_draw_pointer(scr->txt, scr->term->pointer.x, scr->term->pointer.y);
 }
 
+#ifdef BUILD_ENABLE_HANGUL
+static void draw_hangul_preedit(struct screen *scr)
+{
+	struct kmscon_terminal *term = scr->term;
+	struct tsm_screen_attr attr;
+	unsigned int cx, cy, width;
+	uint32_t ch;
+
+	if (!term->hangul_mode || !term->preedit_ch)
+		return;
+
+	cx = tsm_screen_get_cursor_x(term->console);
+	cy = tsm_screen_get_cursor_y(term->console);
+	ch = term->preedit_ch;
+
+	tsm_vte_get_def_attr(term->vte, &attr);
+	attr.underline = 1;
+
+	width = tsm_ucs4_get_width(ch);
+	if (width == 0)
+		width = 1;
+
+	kmscon_text_draw(scr->txt, (uint64_t)ch, &ch, 1, width, cx, cy, &attr);
+}
+#endif
+
 static void do_redraw_screen(struct screen *scr)
 {
 	struct tsm_screen_attr attr;
@@ -139,6 +175,9 @@ static void do_redraw_screen(struct screen *scr)
 	tsm_vte_get_def_attr(scr->term->vte, &attr);
 	kmscon_text_prepare(scr->txt, &attr);
 	tsm_screen_draw(scr->term->console, kmscon_text_draw_cb, scr->txt);
+#ifdef BUILD_ENABLE_HANGUL
+	draw_hangul_preedit(scr);
+#endif
 	draw_pointer(scr);
 	kmscon_text_render(scr->txt);
 
@@ -519,6 +558,106 @@ static void rm_display(struct kmscon_terminal *term, struct uterm_display *disp)
 	free_screen(scr, true);
 }
 
+#ifdef BUILD_ENABLE_HANGUL
+
+static void hangul_commit_ucs4(struct kmscon_terminal *term, const ucschar *str)
+{
+	char u8[4];
+	size_t len;
+
+	if (!str)
+		return;
+	while (*str) {
+		len = tsm_ucs4_to_utf8(*str, u8);
+		if (len > 0)
+			kmscon_pty_write(term->pty, u8, len);
+		str++;
+	}
+}
+
+static void hangul_flush(struct kmscon_terminal *term)
+{
+	const ucschar *commit;
+
+	if (!term->hangul_ic)
+		return;
+	commit = hangul_ic_flush(term->hangul_ic);
+	hangul_commit_ucs4(term, commit);
+	term->preedit_ch = 0;
+}
+
+static void hangul_update_preedit(struct kmscon_terminal *term)
+{
+	const ucschar *preedit = hangul_ic_get_preedit_string(term->hangul_ic);
+
+	term->preedit_ch = (preedit && *preedit) ? *preedit : 0;
+}
+
+static bool hangul_should_passthrough(struct uterm_input_key_event *ev)
+{
+	uint32_t sym;
+
+	if (ev->mods & ~UTERM_SHIFT_MASK)
+		return true;
+	if (ev->num_syms == 0)
+		return true;
+
+	sym = ev->keysyms[0];
+	if (sym == XKB_KEY_BackSpace)
+		return false;
+	if (sym >= 0x20 && sym <= 0x7e)
+		return false;
+	return true;
+}
+
+static bool hangul_process_key(struct kmscon_terminal *term,
+			       struct uterm_input_key_event *ev)
+{
+	const ucschar *commit;
+	uint32_t sym;
+	bool consumed;
+
+	if (!term->hangul_ic || !term->hangul_mode)
+		return false;
+
+	sym = ev->keysyms[0];
+
+	if (sym == XKB_KEY_BackSpace) {
+		if (!hangul_ic_is_empty(term->hangul_ic)) {
+			if (hangul_ic_backspace(term->hangul_ic)) {
+				hangul_update_preedit(term);
+				redraw_all(term);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	if (hangul_should_passthrough(ev)) {
+		if (!hangul_ic_is_empty(term->hangul_ic)) {
+			hangul_flush(term);
+			redraw_all(term);
+		}
+		return false;
+	}
+
+	consumed = hangul_ic_process(term->hangul_ic, (int)sym);
+
+	commit = hangul_ic_get_commit_string(term->hangul_ic);
+	hangul_commit_ucs4(term, commit);
+
+	hangul_update_preedit(term);
+
+	if (consumed) {
+		tsm_screen_sb_reset(term->console);
+		redraw_all(term);
+		return true;
+	}
+	return false;
+}
+
+#endif
+
 static void input_event(struct uterm_input *input, struct uterm_input_key_event *ev, void *data)
 {
 	struct kmscon_terminal *term = data;
@@ -590,6 +729,23 @@ static void input_event(struct uterm_input *input, struct uterm_input_key_event 
 	 * uses this, yet. */
 	if (ev->num_syms > 1)
 		return;
+
+#ifdef BUILD_ENABLE_HANGUL
+	if (term->hangul_ic &&
+	    conf_grab_matches(term->conf->grab_hangul_toggle,
+			      ev->mods, ev->num_syms, ev->keysyms)) {
+		term->hangul_mode = !term->hangul_mode;
+		if (!term->hangul_mode)
+			hangul_flush(term);
+		redraw_all(term);
+		ev->handled = true;
+		return;
+	}
+	if (term->hangul_mode && hangul_process_key(term, ev)) {
+		ev->handled = true;
+		return;
+	}
+#endif
 
 	if (tsm_vte_handle_keyboard(term->vte, ev->keysyms[0], ev->ascii, ev->mods,
 				    ev->codepoints[0])) {
@@ -791,6 +947,12 @@ static void terminal_destroy(struct kmscon_terminal *term)
 	uterm_input_unregister_key_cb(term->input, input_event, term);
 	ev_eloop_rm_fd(term->ptyfd);
 	kmscon_pty_unref(term->pty);
+#ifdef BUILD_ENABLE_HANGUL
+	if (term->hangul_ic) {
+		hangul_ic_delete(term->hangul_ic);
+		term->hangul_ic = NULL;
+	}
+#endif
 	kmscon_font_unref(term->bold_font);
 	kmscon_font_unref(term->font);
 	tsm_vte_unref(term->vte);
@@ -823,6 +985,10 @@ static int session_event(struct kmscon_session *session, struct kmscon_session_e
 		break;
 	case KMSCON_SESSION_DEACTIVATE:
 		term->awake = false;
+#ifdef BUILD_ENABLE_HANGUL
+		if (term->hangul_ic && !hangul_ic_is_empty(term->hangul_ic))
+			hangul_flush(term);
+#endif
 		break;
 	case KMSCON_SESSION_UNREGISTER:
 		terminal_destroy(term);
@@ -906,6 +1072,16 @@ int kmscon_terminal_register(struct kmscon_session **out, struct kmscon_seat *se
 	ret = tsm_vte_set_custom_palette(term->vte, term->conf->custom_palette);
 	if (ret)
 		goto err_vte;
+
+#ifdef BUILD_ENABLE_HANGUL
+	if (term->conf->hangul) {
+		term->hangul_ic = hangul_ic_new(term->conf->hangul_keyboard);
+		if (!term->hangul_ic)
+			log_warning("cannot create hangul input context");
+		term->hangul_mode = false;
+		term->preedit_ch = 0;
+	}
+#endif
 
 	ret = font_set(term);
 	if (ret)

@@ -120,6 +120,15 @@ static void print_help()
 		"\t    --dpms-timeout <secs>      [0]\n"
 		"\t                                 Screen timeout in seconds (0=off)\n"
 		"\n"
+		"Hangul Input Options:\n"
+		"\t    --hangul                   [off]\n"
+		"\t                                 Enable Hangul (Korean) input\n"
+		"\t    --hangul-keyboard <id>     [2]\n"
+		"\t                                 Hangul keyboard layout\n"
+		"\t                                 (2=dubeolsik, 3f=sebeolsik-final)\n"
+		"\t    --grab-hangul-toggle <grab> [Hangul]\n"
+		"\t                                 Shortcut to toggle Hangul mode\n"
+		"\n"
 		"Grabs / Keyboard-Shortcuts:\n"
 		"\t    --grab-scroll-up <grab>     [<Shift>Up]\n"
 		"\t                                  Shortcut to scroll up\n"
@@ -692,6 +701,8 @@ static struct conf_grab def_grab_rotate_cw = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB
 
 static struct conf_grab def_grab_rotate_ccw = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB_KEY_minus);
 
+static struct conf_grab def_grab_hangul_toggle = CONF_SINGLE_GRAB(0, XKB_KEY_Hangul);
+
 static palette_t def_palette = {
 	[TSM_COLOR_BLACK] = {0, 0, 0},		   /* black */
 	[TSM_COLOR_RED] = {205, 0, 0},		   /* red */
@@ -770,6 +781,11 @@ int kmscon_conf_new(struct conf_ctx **out)
 		CONF_OPTION_UINT(0, "xkb-repeat-rate", &conf->xkb_repeat_rate, 50),
 		CONF_OPTION_BOOL(0, "mouse", &conf->mouse, true),
 		CONF_OPTION_UINT(0, "dpms-timeout", &conf->dpms_timeout, 0),
+
+		/* Hangul Input Options */
+		CONF_OPTION_BOOL(0, "hangul", &conf->hangul, false),
+		CONF_OPTION_STRING(0, "hangul-keyboard", &conf->hangul_keyboard, "2"),
+		CONF_OPTION_GRAB(0, "grab-hangul-toggle", &conf->grab_hangul_toggle, &def_grab_hangul_toggle),
 
 		/* Grabs / Keyboard-Shortcuts */
 		CONF_OPTION_GRAB(0, "grab-scroll-up", &conf->grab_scroll_up, &def_grab_scroll_up),

@@ -76,6 +76,7 @@ gbm_deps = dependency('gbm', disabler: true, required: get_option('video_drm3d')
 egl_deps = dependency('egl', disabler: true, required: get_option('video_drm3d'))
 glesv2_deps = dependency('glesv2', disabler: true, required: require_glesv2)
 pango_deps = dependency('pangoft2', disabler: true, required: get_option('font_pango'))
+libhangul_deps = dependency('libhangul', disabler: true, required: get_option('hangul'))
 xsltproc = find_program('xsltproc', native: true, disabler: true, required: get_option('docs'))
 check_deps = dependency('check', disabler: true, required: get_option('tests'))
 
@@ -90,6 +91,7 @@ sections = {
   'font': 'Font Backends',
   'renderer': 'Renderers',
   'session': 'Session Types',
+  'hangul': 'Input Methods',
 }
 config = configuration_data()
 # Note: keep this in sync with the dependencies above
@@ -103,6 +105,7 @@ foreach name, reqs : {
   'font_pango': [pango_deps],
   'session_dummy': [],
   'session_terminal': [],
+  'hangul': [libhangul_deps],
 }
   found = true
   foreach req : reqs

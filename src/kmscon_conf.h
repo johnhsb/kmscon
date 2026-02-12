@@ -120,6 +120,11 @@ struct kmscon_conf_t {
 	/* DPMS screen timeout in seconds (0 = disabled) */
 	unsigned int dpms_timeout;
 
+	/* Hangul Input Options */
+	bool hangul;
+	char *hangul_keyboard;
+	struct conf_grab *grab_hangul_toggle;
+
 	/* Grabs / Keyboard-Shortcuts */
 	/* scroll-up grab */
 	struct conf_grab *grab_scroll_up;

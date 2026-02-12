@@ -243,8 +243,12 @@ endif
 if enable_session_terminal
   kmscon_srcs += 'kmscon_terminal.c'
 endif
+kmscon_dep = [xkbcommon_deps, libtsm_deps, threads_deps, dl_deps, conf_deps, shl_deps, eloop_deps, uterm_deps]
+if enable_hangul
+  kmscon_dep += libhangul_deps
+endif
 kmscon = executable('kmscon', kmscon_srcs,
-  dependencies: [xkbcommon_deps, libtsm_deps, threads_deps, dl_deps, conf_deps, shl_deps, eloop_deps, uterm_deps],
+  dependencies: kmscon_dep,
   export_dynamic: true,
   install: true,
   install_dir: libexecdir,
