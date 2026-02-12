@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+export DEB_CFLAGS_APPEND = -Wno-error=date-time
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_install:
+	dh_auto_install
+	rm -f debian/kmscon-hangul/usr/lib/aarch64-linux-gnu/libtsm.so*
+	rm -f debian/kmscon-hangul/usr/lib/aarch64-linux-gnu/pkgconfig/libtsm.pc
+	rm -f debian/kmscon-hangul/usr/include/libtsm.h

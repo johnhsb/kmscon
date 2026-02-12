@@ -1,0 +1,7 @@
+kmscon-hangul (9.3.1-3) unstable; urgency=medium
+
+  * Fork as kmscon-hangul to avoid conflicts with upstream kmscon
+  * Add Hangul (Korean) input support using libhangul
+  * Add --hangul, --hangul-keyboard, --grab-hangul-toggle options
+
+ -- johnhsb <johnhsb@github.com>  Thu, 13 Feb 2026 06:30:00 +0900

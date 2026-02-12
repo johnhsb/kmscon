@@ -1,0 +1,35 @@
+Source: kmscon-hangul
+Section: utils
+Priority: optional
+Maintainer: johnhsb <johnhsb@github.com>
+Build-Depends:
+ debhelper (>= 13),
+ meson,
+ pkg-config,
+ libxkbcommon-dev (>= 0.5.0),
+ libudev-dev (>= 172),
+ libdrm-dev,
+ libgbm-dev,
+ libegl-dev,
+ libgles-dev,
+ libpango1.0-dev,
+ libsystemd-dev,
+ libhangul-dev,
+ check,
+ xsltproc,
+ docbook-xsl,
+Standards-Version: 4.6.2
+
+Package: kmscon-hangul
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, login
+Provides: kmscon (= ${binary:Version})
+Conflicts: kmscon
+Replaces: kmscon
+Description: KMS terminal emulator with Hangul (Korean) input support
+ kmscon is a simple terminal emulator based on Linux kernel mode
+ setting (KMS). It is an attempt to replace the in-kernel VT
+ implementation with a userspace console.
+ .
+ This build adds Hangul (Korean) input support via libhangul,
+ with dubeolsik/sebeolsik keyboard layouts and Han/Eng toggle key.
