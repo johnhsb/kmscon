@@ -622,6 +622,14 @@ static bool hangul_process_key(struct kmscon_terminal *term,
 
 	sym = ev->keysyms[0];
 
+	/* Ignore modifier-only keys to preserve hangul composition state.
+	 * Without this, pressing Shift before a consonant (e.g. Shift+T
+	 * for ㅆ) would flush the current composition because the Shift
+	 * keysym (0xffe1) falls outside the ASCII range checked in
+	 * hangul_should_passthrough(). */
+	if (sym >= XKB_KEY_Shift_L && sym <= XKB_KEY_Hyper_R)
+		return false;
+
 	if (sym == XKB_KEY_BackSpace) {
 		if (!hangul_ic_is_empty(term->hangul_ic)) {
 			if (hangul_ic_backspace(term->hangul_ic)) {
