@@ -83,6 +83,7 @@ explicitly enable it via command line:
 |`font_pango`| `auto` | Pango based scalable font renderer |
 |`renderer_gltex`| `auto` | OpenGLESv2 accelerated renderer |
 |`docs`|`auto`| Build manpages and documentation |
+|`term`|`kmscon`| Default $TERM value |
 
 
 ## Running

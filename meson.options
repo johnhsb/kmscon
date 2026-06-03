@@ -32,3 +32,7 @@ option('font_pango', type: 'feature', value: 'auto',
 # dbus integration
 option('dbus', type: 'feature', value: 'auto',
   description: 'dbus integration')
+
+# TERM default value
+option('term', type: 'string', value: 'kmscon',
+  description: 'default $TERM value')
