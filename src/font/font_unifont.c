@@ -33,11 +33,12 @@
  * statically compiled into the file. This bitmap font has 8x16 and 16x16
  * glyphs. This can statically compile in any font defined as a unifont style
  * hex format. This font is from the GNU unifont project available at:
- *   http://unifoundry.com/unifont.html
+ *   https://unifoundry.com/unifont/index.html
  *
  * This file is heavily based on font_8x16.c
  */
 
+#include <errno.h>
 #include <libtsm.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -155,7 +156,7 @@ static struct kmscon_glyph *new_glyph(const struct kmscon_font_attr *attr, const
 	return g;
 }
 
-static bool kmscon_font_unifont_has_glyph(struct kmscon_font *font, const uint32_t *ch, size_t len)
+static bool kmscon_font_unifont_has_glyph(struct kmscon_font *font, uint32_t ch)
 {
 	struct unifont_data *uf = font->data;
 	uint32_t block_len;
@@ -166,13 +167,12 @@ static bool kmscon_font_unifont_has_glyph(struct kmscon_font *font, const uint32
 	/* Then the block index */
 	blocks = (struct unifont_glyph_block *)(uf->font_data + 4);
 
-	return lookup_block(blocks, block_len, *ch) >= 0;
+	return lookup_block(blocks, block_len, ch) >= 0;
 }
 
-static struct kmscon_glyph *find_glyph(uint64_t id, const struct kmscon_font *font)
+static struct kmscon_glyph *kmscon_font_unifont_render(struct kmscon_font *font, uint32_t ch)
 {
 	struct unifont_data *uf = font->data;
-	uint32_t ch = id & TSM_UCS4_MAX;
 	const uint8_t *data;
 	uint32_t len;
 	const struct unifont_glyph_block *blocks;
@@ -253,15 +253,6 @@ static void kmscon_font_unifont_destroy(struct kmscon_font *font)
 	log_debug("unloading static unifont font");
 	free(uf->font_data);
 	free(uf);
-}
-
-static struct kmscon_glyph *kmscon_font_unifont_render(struct kmscon_font *font, uint64_t id,
-						       const uint32_t *ch, size_t len)
-{
-	if (len > 1)
-		return NULL;
-
-	return find_glyph(id, font);
 }
 
 struct kmscon_font_ops kmscon_font_unifont_ops = {

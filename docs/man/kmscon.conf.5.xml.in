@@ -143,7 +143,7 @@ font-name=Ubuntu Mono
       <varlistentry>
         <term><option>libseat</option></term>
         <listitem>
-          <para>Use libseat for seat management. (default: on)</para>
+          <para>Use libseat for seat management. (default: off)</para>
         </listitem>
       </varlistentry>
 
@@ -162,16 +162,25 @@ font-name=Ubuntu Mono
       </varlistentry>
 
       <varlistentry>
-        <term><option>terminal-session</option></term>
+        <term><option>login</option></term>
         <listitem>
-          <para>Enable terminal session. (default: on)</para>
+          <para>Start the given login process instead of the default process; all arguments following '--' will be be parsed as argv to this process. No more options after '--' will be parsed so use it at the end of the argument string. (default: /bin/login -p)</para>
         </listitem>
       </varlistentry>
 
       <varlistentry>
-        <term><option>login</option></term>
+        <term><option>asciicast</option></term>
         <listitem>
-          <para>Start the given login process instead of the default process; all arguments following '--' will be be parsed as argv to this process. No more options after '--' will be parsed so use it at the end of the argument string. (default: /bin/login -p)</para>
+          <para>Path to an asciicast animation to play after opening the
+                terminal session. The animation is stopped on keyboard input. (default:
+                unset)</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>asciicast-loop</option></term>
+        <listitem>
+          <para>Loop the asciicast animation. (default: off)</para>
         </listitem>
       </varlistentry>
 
@@ -216,6 +225,14 @@ font-name=Ubuntu Mono
           <para>Enable bell forwarding to the VT. When enabled, the BEL character
                 (0x07) from applications is forwarded to the underlying VT.
                 (default: off)</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>blink</option></term>
+        <listitem>
+          <para>Enable cursor and text blink. When enabled, the cursor will blink on the screen,
+                and text with blink attribute will blink too. (default: on)</para>
         </listitem>
       </varlistentry>
 
@@ -365,13 +382,6 @@ font-name=Ubuntu Mono
         <term><option>grab-session-prev</option></term>
         <listitem>
           <para>Switch to previous session. (default: &lt;Ctrl&gt;&lt;Logo&gt;Left)</para>
-        </listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>grab-session-dummy</option></term>
-        <listitem>
-          <para>Switch to dummy session. (default: &lt;Ctrl&gt;&lt;Logo&gt;Escape)</para>
         </listitem>
       </varlistentry>
 

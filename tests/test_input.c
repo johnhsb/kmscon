@@ -38,10 +38,10 @@ static void print_help();
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
 #include "input/input.h"
+#include "monitor.h"
 #include "shl/eloop.h"
 #include "shl/log.h"
 #include "test_include.h"
-#include "uterm_monitor.h"
 
 static struct ev_eloop *eloop;
 static struct input *input;
@@ -104,35 +104,18 @@ static void input_arrived(struct input *input, struct input_key_event *ev, void 
 
 static void setup_input(struct uterm_monitor *mon)
 {
-	char *keymap, *compose_file;
-	size_t compose_file_len;
 	int ret;
-
-	keymap = NULL;
-	if (input_conf.xkb_keymap && *input_conf.xkb_keymap) {
-		ret = shl_read_file(input_conf.xkb_keymap, &keymap, NULL);
-		if (ret)
-			log_error("cannot read keymap file %s: %d", input_conf.xkb_keymap, ret);
-	}
-
-	compose_file = NULL;
-	compose_file_len = 0;
-	if (input_conf.xkb_compose_file && *input_conf.xkb_compose_file) {
-		ret = shl_read_file(input_conf.xkb_compose_file, &compose_file, &compose_file_len);
-		if (ret)
-			log_error("cannot read compose file %s: %d", input_conf.xkb_compose_file,
-				  ret);
-	}
 
 	ret = input_new(&input, eloop);
 	if (ret)
 		return;
 	ret = input_set_keymap(input, input_conf.xkb_model, input_conf.xkb_layout,
-			       input_conf.xkb_variant, input_conf.xkb_options, input_conf.locale,
-			       input_conf.xkb_keymap, input_conf.xkb_compose_file,
-			       compose_file_len);
+			       input_conf.xkb_variant, input_conf.xkb_options,
+			       input_conf.xkb_keymap);
 	if (ret)
 		return;
+
+	input_set_compose(input, input_conf.locale, input_conf.xkb_compose_file);
 	input_set_conf(input, 250, 50, true);
 	ret = input_register_key_cb(input, input_arrived, NULL);
 	if (ret)

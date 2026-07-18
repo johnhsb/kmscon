@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: MIT
 
-
-
 #
 # Binary File Compiler
 #
@@ -31,42 +29,8 @@ subdir('font')
 subdir('input')
 subdir('video')
 subdir('render')
-
-#
-# libuterm
-# The uterm library provides helpers to create terminals in user-space. They
-# are not limited to text-based terminals but rather provide graphics contexts
-# so arbitrary output can be displayed. Additionally, they provide VT
-# abstractions and an input layer
-#
-uterm_srcs = [
-  'uterm_monitor.c',
-  'uterm_vt.c',
-  'uterm_vt_fake.c',
-  'uterm_vt_real.c',
-]
-
-uterm_dep = [
-  libudev_deps,
-  xkbcommon_deps,
-  shl_deps,
-  eloop_deps,
-  input_deps,
-  video_deps,
-]
-
-if enable_libseat
-  uterm_srcs += 'uterm_vt_libseat.c'
-  uterm_dep += libseat_deps
-endif
-
-uterm = static_library('uterm', uterm_srcs,
-  dependencies: uterm_dep
-)
-uterm_deps = declare_dependency(
-  link_with: [uterm],
-  dependencies: uterm_dep
-)
+subdir('misc')
+subdir('uterm')
 
 #
 # Binaries
@@ -75,42 +39,24 @@ uterm_deps = declare_dependency(
 # built as part of kmscon.
 #
 
-# conf as a standalone library for use in tests
-conf = static_library('conf', 'conf.c', dependencies: [xkbcommon_deps])
-conf_deps = declare_dependency(
-  link_with: [conf],
-  include_directories: [include_directories('.')]
-)
-
 kmscon_srcs = [
-  'pty.c',
-  'kmscon_seat.c',
-  'kmscon_conf.c',
-  'kmscon_issue.c',
-  'kmscon_main.c',
+  'seat.c',
+  'config.c',
+  'main.c',
+  'terminal.c',
 ]
 kmscon_dep = [xkbcommon_deps,
   libtsm_deps,
   threads_deps,
   dl_deps,
-  conf_deps,
   shl_deps,
   eloop_deps,
   uterm_deps,
   render_deps,
   font_deps,
+  misc_deps,
 ]
 
-if enable_session_dummy
-  kmscon_srcs += 'kmscon_dummy.c'
-endif
-if enable_session_terminal
-  kmscon_srcs += 'kmscon_terminal.c'
-endif
-if enable_dbus
-  kmscon_srcs += 'dbus.c'
-  kmscon_dep += dbus_deps
-endif
 # IM abstraction layer — always compiled; backends are conditional
 kmscon_srcs += 'kmscon_im.c'
 if enable_im_hangul

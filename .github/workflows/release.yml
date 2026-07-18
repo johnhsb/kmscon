@@ -30,7 +30,7 @@ jobs:
           submodules: recursive
 
       - name: Fetch libtsm subproject
-        run: git clone --depth 1 --branch v4.5.0 https://github.com/kmscon/libtsm subprojects/libtsm
+        run: git clone --depth 1 --branch v4.6.0 https://github.com/kmscon/libtsm subprojects/libtsm
 
       - name: Install build dependencies
         run: |
@@ -93,14 +93,14 @@ jobs:
           body: |
             ## kmscon-hangul ${{ github.ref_name || inputs.tag }}
 
-            kmscon v10.0.0 기반 한글 입력 지원 및 버그 수정 패키지
+            kmscon v10.0.1 기반 한글 입력 지원 및 버그 수정 패키지
 
             ### 변경 사항
             - 범용 IM 추상화 레이어(kmscon_im_ops) + libhangul 한글 입력 백엔드
             - `--im-engine`, `--im-params`, `--grab-im-toggle` 옵션 추가
             - freetype CJK 폰트 사이즈 수정 (`y_ppem` 기반)
             - drm `perform_modeset()` use-after-free SEGV 수정 (VT 전환/DPMS 복귀 시 크래시)
-            - libtsm v4.5.0 정적 링크
+            - libtsm v4.6.0 정적 링크
 
             ### 설치 (Debian trixie)
             ```bash

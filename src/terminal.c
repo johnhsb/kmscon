@@ -36,19 +36,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "asciinema.h"
 #include "conf.h"
+#include "config.h"
 #include "font/font.h"
 #include "input/input.h"
-#include "kmscon_conf.h"
+#include "issue.h"
 #include "kmscon_im.h"
-#include "kmscon_issue.h"
-#include "kmscon_seat.h"
-#include "kmscon_terminal.h"
 #include "pty.h"
 #include "render/text.h"
+#include "seat.h"
 #include "shl/dlist.h"
 #include "shl/eloop.h"
 #include "shl/log.h"
+#include "terminal.h"
 #include "video/video.h"
 
 #define LOG_SUBSYSTEM "terminal"
@@ -105,7 +106,13 @@ struct kmscon_terminal {
 	struct kmscon_im *im;
 	bool im_mode;
 	uint32_t im_preedit; /* UCS4 char drawn at cursor during composition */
+
+	struct ev_timer *blink_timer;
+	bool blinking;
+	struct kmscon_asciinema *asciinema;
 };
+
+#define BLINK_TIMER_NS (500 * 1000 * 1000)
 
 static int font_set(struct kmscon_terminal *term);
 
@@ -136,36 +143,47 @@ static void draw_pointer(struct screen *scr)
 }
 
 /*
- * Overlay the preedit character at the current cursor position so the user
- * can see the syllable block being composed.  The character is drawn with an
- * underline attribute on top of whatever the VTE already put there.
+ * Draw the whole screen, overlaying the preedit character at the current
+ * cursor position (with an underline attribute) so the user can see the
+ * syllable block being composed. kmscon_text_draw() hands the renderer a
+ * single flat cell array for the whole screen, so to overlay the preedit
+ * glyph we copy that array, patch the cursor cell, and draw the copy instead.
  *
  * Phase 2 note: for multi-char preedit (Chinese Pinyin, Japanese Kana) this
- * function would iterate over a preedit string starting at (cx, cy) and
- * advance posx for each character.
+ * function would patch a run of cells starting at (cx, cy) instead of just
+ * the one under the cursor.
  */
-static void draw_im_preedit(struct screen *scr)
+static void draw_screen_with_im(struct screen *scr)
 {
 	struct kmscon_terminal *term = scr->term;
-	struct tsm_screen_attr attr;
-	unsigned int cx, cy, width;
-	uint32_t ch;
+	struct kmscon_text *txt = scr->txt;
+	const struct tsm_screen_cell *cells;
+	struct tsm_screen_cell *patched = NULL;
+	unsigned int cur_x, cur_y, width, height, idx;
+	bool cur_visible;
 
-	if (!term->im_mode || !term->im_preedit)
-		return;
+	cells = tsm_screen_draw2(term->console);
+	cur_x = tsm_screen_get_cursor_x(term->console);
+	cur_y = tsm_screen_get_cursor_y(term->console);
+	cur_visible = !(tsm_screen_get_flags(term->console) & TSM_SCREEN_HIDE_CURSOR);
 
-	ch = term->im_preedit;
-	cx = tsm_screen_get_cursor_x(term->console);
-	cy = tsm_screen_get_cursor_y(term->console);
+	if (cells && term->im_mode && term->im_preedit) {
+		width = tsm_screen_get_width(term->console);
+		height = tsm_screen_get_height(term->console);
+		idx = cur_y * width + cur_x;
+		if (idx < width * height) {
+			patched = malloc(width * height * sizeof(*patched));
+			if (patched) {
+				memcpy(patched, cells, width * height * sizeof(*patched));
+				patched[idx].ch = term->im_preedit;
+				patched[idx].attr2.underline = 1;
+				cells = patched;
+			}
+		}
+	}
 
-	tsm_vte_get_def_attr(term->vte, &attr);
-	attr.underline = 1;
-
-	width = tsm_ucs4_get_width(ch);
-	if (width == 0)
-		width = 1;
-
-	kmscon_text_draw(scr->txt, (uint64_t)ch, &ch, 1, width, cx, cy, &attr);
+	txt->ops->draw(txt, cells, cur_x, cur_y, cur_visible && !txt->blinking);
+	free(patched);
 }
 
 static inline uint32_t argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b)
@@ -341,9 +359,8 @@ static void do_redraw_screen(struct screen *scr)
 	scr->pending = false;
 
 	tsm_vte_get_def_attr(scr->term->vte, &attr);
-	kmscon_text_prepare(scr->txt, &attr);
-	tsm_screen_draw(scr->term->console, kmscon_text_draw_cb, scr->txt);
-	draw_im_preedit(scr);
+	kmscon_text_prepare(scr->txt, &attr, scr->term->blinking);
+	draw_screen_with_im(scr);
 	draw_pointer(scr);
 	kmscon_text_render(scr->txt);
 
@@ -462,6 +479,35 @@ static void display_pageflip(void *unused, void *unused2, void *data)
 	scr->swapping = false;
 	if (scr->pending)
 		do_redraw_screen(scr);
+}
+
+static void blink_event(struct ev_timer *timer, uint64_t count, void *data)
+{
+	struct kmscon_terminal *term = data;
+
+	if (!term->awake)
+		return;
+
+	term->blinking = !term->blinking;
+	redraw_all(term);
+}
+
+static void asciinema_write(const char *u8, size_t len, void *data)
+{
+	struct kmscon_terminal *term = data;
+
+	if (!term->opened || !term->awake || !kmscon_session_get_foreground(term->session))
+		return;
+
+	tsm_vte_input(term->vte, u8, len);
+	redraw_all(term);
+}
+
+static void asciinema_start(struct kmscon_terminal *term)
+{
+	if (!term->asciinema)
+		return;
+	kmscon_asciinema_start(term->asciinema);
 }
 
 static void osc_event(struct tsm_vte *vte, const char *osc_string, size_t osc_len, void *data)
@@ -685,7 +731,7 @@ static void rotate_ccw_all(struct kmscon_terminal *term)
 	update_pointer_max_all(term);
 }
 
-static int add_display(struct kmscon_terminal *term, struct display *disp)
+int terminal_add_display(struct kmscon_terminal *term, struct display *disp)
 {
 	struct shl_dlist *iter;
 	struct screen *scr;
@@ -781,7 +827,7 @@ static void free_screen(struct screen *scr, bool update)
 	terminal_update_size_notify(term);
 }
 
-static void rm_display(struct kmscon_terminal *term, struct display *disp)
+void terminal_rm_display(struct kmscon_terminal *term, struct display *disp)
 {
 	struct shl_dlist *iter;
 	struct screen *scr;
@@ -798,6 +844,27 @@ static void rm_display(struct kmscon_terminal *term, struct display *disp)
 
 	log_debug("removed display %p from terminal %p", disp, term);
 	free_screen(scr, true);
+}
+
+static void zoom_in(struct kmscon_terminal *term)
+{
+	if (term->font_attr.height > 150) // don't allow zoom in beyond 150
+		return;
+
+	term->font_attr.height += term->font->increase_step;
+	if (font_set(term))
+		term->font_attr.height -= term->font->increase_step;
+}
+
+static void zoom_out(struct kmscon_terminal *term)
+{
+	if (term->font_attr.height <= term->font->increase_step)
+		return;
+	if (term->font_attr.height - term->font->increase_step < 10)
+		return;
+	term->font_attr.height -= term->font->increase_step;
+	if (font_set(term))
+		term->font_attr.height += term->font->increase_step;
 }
 
 /* Write a NULL-terminated UCS4 string to the PTY, converting char by char. */
@@ -826,6 +893,7 @@ static void input_event(struct input *input, struct input_key_event *ev, void *d
 
 	// reset mouse selection on keypress
 	tsm_screen_selection_reset(term->console);
+	kmscon_asciinema_stop(term->asciinema);
 
 	if (conf_grab_matches(term->conf->grab_scroll_up, ev->mods, ev->num_syms, ev->keysyms)) {
 		tsm_screen_sb_up(term->console, 1);
@@ -853,22 +921,12 @@ static void input_event(struct input *input, struct input_key_event *ev, void *d
 	}
 	if (conf_grab_matches(term->conf->grab_zoom_in, ev->mods, ev->num_syms, ev->keysyms)) {
 		ev->handled = true;
-		if (term->font_attr.height + term->font->increase_step < term->font_attr.height)
-			return;
-
-		term->font_attr.height += term->font->increase_step;
-		if (font_set(term))
-			term->font_attr.height -= term->font->increase_step;
+		zoom_in(term);
 		return;
 	}
 	if (conf_grab_matches(term->conf->grab_zoom_out, ev->mods, ev->num_syms, ev->keysyms)) {
 		ev->handled = true;
-		if (term->font_attr.height <= term->font->increase_step)
-			return;
-
-		term->font_attr.height -= term->font->increase_step;
-		if (font_set(term))
-			term->font_attr.height += term->font->increase_step;
+		zoom_out(term);
 		return;
 	}
 	if (conf_grab_matches(term->conf->grab_rotate_cw, ev->mods, ev->num_syms, ev->keysyms)) {
@@ -1116,11 +1174,17 @@ static void pointer_event(struct input *input, struct input_pointer_event *ev, v
 		handle_pointer_button(term, ev);
 		break;
 	case POINTER_WHEEL:
-		tsm_screen_selection_reset(term->console);
-		if (term->conf->natural_scrolling != (ev->wheel > 0))
-			tsm_screen_sb_up(term->console, 3);
-		else
-			tsm_screen_sb_down(term->console, 3);
+		if (input_get_mods(term->input) & INPUT_CONTROL_MASK) {
+			if (ev->wheel > 0)
+				zoom_in(term);
+			else
+				zoom_out(term);
+		} else {
+			if (term->conf->natural_scrolling != (ev->wheel > 0))
+				tsm_screen_sb_up(term->console, 3);
+			else
+				tsm_screen_sb_down(term->console, 3);
+		}
 		break;
 	case POINTER_SYNC:
 		redraw_all(term);
@@ -1147,6 +1211,21 @@ static void rm_all_screens(struct kmscon_terminal *term)
 	term->min_rows = 0;
 }
 
+static void kmscon_issue_write(struct kmscon_terminal *term)
+{
+	char pty_name[128] = {0};
+	char *issue;
+	size_t issue_len;
+
+	kmscon_pty_get_slave_name(term->pty, pty_name, sizeof(pty_name));
+	issue = kmscon_issue_get_buffer(term->conf->issue_path, pty_name, &issue_len);
+	if (!issue || !issue_len)
+		return;
+
+	tsm_vte_input(term->vte, issue, issue_len);
+	free(issue);
+}
+
 static int terminal_open(struct kmscon_terminal *term)
 {
 	int ret;
@@ -1164,7 +1243,8 @@ static int terminal_open(struct kmscon_terminal *term)
 
 	term->opened = true;
 	if (term->conf->issue)
-		kmscon_issue_write(term->vte, term->pty, term->conf->issue_path);
+		kmscon_issue_write(term);
+	asciinema_start(term);
 
 	update_pointer_max_all(term);
 	redraw_all(term);
@@ -1173,16 +1253,57 @@ static int terminal_open(struct kmscon_terminal *term)
 
 static void terminal_close(struct kmscon_terminal *term)
 {
+	kmscon_asciinema_pause(term->asciinema);
 	kmscon_pty_close(term->pty);
 	term->opened = false;
 }
 
-static void terminal_destroy(struct kmscon_terminal *term)
+void terminal_refresh_displays(struct kmscon_terminal *term)
+{
+	if (term->pointer.visible)
+		hw_cursor_show(term, term->pointer.x, term->pointer.y);
+	redraw_all_text(term);
+}
+
+void terminal_activate(struct kmscon_terminal *term)
+{
+	term->awake = true;
+	if (term->conf->blink)
+		ev_timer_enable(term->blink_timer);
+	if (!term->opened)
+		terminal_open(term);
+	else
+		kmscon_asciinema_resume(term->asciinema);
+	if (term->pointer.visible)
+		hw_cursor_show(term, term->pointer.x, term->pointer.y);
+	redraw_all_text(term);
+}
+
+void terminal_deactivate(struct kmscon_terminal *term)
+{
+	term->awake = false;
+	hw_cursor_hide(term);
+	if (term->conf->blink)
+		ev_timer_disable(term->blink_timer);
+	kmscon_asciinema_pause(term->asciinema);
+
+	if (term->im && !kmscon_im_is_empty(term->im)) {
+		struct kmscon_im_result r;
+
+		kmscon_im_flush(term->im, &r);
+		im_commit_to_pty(term, r.commit);
+		term->im_preedit = 0;
+	}
+}
+
+void terminal_destroy(struct kmscon_terminal *term)
 {
 	log_debug("free terminal object %p", term);
 
 	terminal_close(term);
 	rm_all_screens(term);
+	ev_eloop_rm_timer(term->blink_timer);
+	kmscon_asciinema_free(term->asciinema);
 	input_unregister_pointer_cb(term->input, pointer_event, term);
 	input_unregister_key_cb(term->input, input_event, term);
 	ev_eloop_rm_fd(term->ptyfd);
@@ -1197,61 +1318,28 @@ static void terminal_destroy(struct kmscon_terminal *term)
 	free(term);
 }
 
-static int session_event(struct kmscon_session *session, struct kmscon_session_event *ev,
-			 void *data)
-{
-	struct kmscon_terminal *term = data;
-
-	switch (ev->type) {
-	case KMSCON_SESSION_DISPLAY_NEW:
-		add_display(term, ev->disp);
-		break;
-	case KMSCON_SESSION_DISPLAY_GONE:
-		rm_display(term, ev->disp);
-		break;
-	case KMSCON_SESSION_DISPLAY_REFRESH:
-		if (term->pointer.visible)
-			hw_cursor_show(term, term->pointer.x, term->pointer.y);
-		redraw_all_text(term);
-		break;
-	case KMSCON_SESSION_ACTIVATE:
-		term->awake = true;
-		if (!term->opened)
-			terminal_open(term);
-		if (term->pointer.visible)
-			hw_cursor_show(term, term->pointer.x, term->pointer.y);
-		redraw_all_text(term);
-		break;
-	case KMSCON_SESSION_DEACTIVATE:
-		term->awake = false;
-		hw_cursor_hide(term);
-		if (term->im && !kmscon_im_is_empty(term->im)) {
-			struct kmscon_im_result r;
-
-			kmscon_im_flush(term->im, &r);
-			im_commit_to_pty(term, r.commit);
-			term->im_preedit = 0;
-		}
-		break;
-	case KMSCON_SESSION_UNREGISTER:
-		terminal_destroy(term);
-		break;
-	}
-
-	return 0;
-}
-
 static void pty_input(struct kmscon_pty *pty, const char *u8, size_t len, void *data)
 {
 	struct kmscon_terminal *term = data;
 
-	if (!len) {
-		terminal_close(term);
-		terminal_open(term);
-	} else {
+	if (len) {
 		tsm_vte_input(term->vte, u8, len);
 		redraw_all(term);
 	}
+}
+
+static void pty_exit(struct kmscon_pty *pty, bool restart, void *data)
+{
+	struct kmscon_terminal *term = data;
+
+	terminal_close(term);
+
+	if (restart) {
+		terminal_open(term);
+		return;
+	}
+
+	ev_eloop_exit(term->eloop);
 }
 
 static void pty_event(struct ev_fd *fd, int mask, void *data)
@@ -1268,26 +1356,29 @@ static void write_event(struct tsm_vte *vte, const char *u8, size_t len, void *d
 	kmscon_pty_write(term->pty, u8, len);
 }
 
-int kmscon_terminal_register(struct kmscon_session **out, struct kmscon_seat *seat,
-			     unsigned int vtnr)
+struct kmscon_terminal *terminal_new(struct kmscon_session *session, unsigned int vtnr,
+				     struct conf_ctx *conf_ctx, struct ev_eloop *eloop,
+				     struct input *input, const char *seat_name)
 {
 	struct kmscon_terminal *term;
+	struct itimerspec blink_interval = {
+		.it_interval = {0, BLINK_TIMER_NS},
+		.it_value = {0, BLINK_TIMER_NS},
+	};
 	int ret;
-
-	if (!out || !seat)
-		return -EINVAL;
 
 	term = malloc(sizeof(*term));
 	if (!term)
-		return -ENOMEM;
+		return NULL;
 
 	memset(term, 0, sizeof(*term));
 	term->ref = 1;
-	term->eloop = kmscon_seat_get_eloop(seat);
-	term->input = kmscon_seat_get_input(seat);
+	term->session = session;
+	term->eloop = eloop;
+	term->input = input;
 	shl_dlist_init(&term->screens);
 
-	term->conf_ctx = kmscon_seat_get_conf(seat);
+	term->conf_ctx = conf_ctx;
 	term->conf = conf_ctx_get_mem(term->conf_ctx);
 
 	strncpy(term->font_attr.name, term->conf->font_name, KMSCON_FONT_MAX_NAME - 1);
@@ -1329,13 +1420,13 @@ int kmscon_terminal_register(struct kmscon_session **out, struct kmscon_seat *se
 	if (ret)
 		goto err_vte;
 
-	ret = kmscon_pty_new(&term->pty, pty_input, term);
+	ret = kmscon_pty_new(&term->pty, pty_input, pty_exit, term);
 	if (ret)
 		goto err_font;
 
 	ret = kmscon_pty_set_conf(term->pty, term->conf->term, "truecolor", term->conf->argv,
-				  kmscon_seat_get_name(seat), vtnr, term->conf->reset_env,
-				  term->conf->backspace_delete);
+				  seat_name, vtnr, term->conf->reset_env,
+				  term->conf->backspace_delete, term->conf->oneshot);
 	if (ret)
 		goto err_pty;
 
@@ -1353,18 +1444,23 @@ int kmscon_terminal_register(struct kmscon_session **out, struct kmscon_seat *se
 		if (ret)
 			goto err_input;
 	}
-
-	ret = kmscon_seat_register_session(seat, &term->session, session_event, term);
-	if (ret) {
-		log_error("cannot register session for terminal: %d", ret);
-		goto err_pointer;
+	if (term->conf->blink) {
+		ret = ev_eloop_new_timer(term->eloop, &term->blink_timer, &blink_interval,
+					 blink_event, term);
+		if (ret)
+			goto err_pointer;
+	}
+	if (term->conf->asciicast) {
+		ret = kmscon_asciinema_new(&term->asciinema, term->eloop, term->conf->asciicast,
+					   term->conf->asciicast_loop, asciinema_write, term);
+		if (ret)
+			log_warn("cannot load asciicast %s: %d", term->conf->asciicast, ret);
 	}
 
 	ev_eloop_ref(term->eloop);
 	input_ref(term->input);
-	*out = term->session;
 	log_debug("new terminal object %p", term);
-	return 0;
+	return term;
 
 err_pointer:
 	input_unregister_pointer_cb(term->input, pointer_event, term);
@@ -1382,5 +1478,5 @@ err_con:
 	tsm_screen_unref(term->console);
 err_free:
 	free(term);
-	return ret;
+	return NULL;
 }

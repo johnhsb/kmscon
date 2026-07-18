@@ -132,7 +132,7 @@
       <varlistentry>
         <term><option>--vt {/path/to/vt|ttyX|X}</option></term>
         <listitem>
-          <para>Use this VT. The argument is either the full path `/dev/ttyX', 
+          <para>Use this VT. The argument is either the full path `/dev/ttyX',
                 the device name `ttyX' or just the tty number. If not specified,
                 KMSCON tries to find a VT by itself. On seats without VTs,
                 KMSCON simply activates itself automatically without using any
@@ -163,7 +163,7 @@
           <para>Use libseat for seat management, input and video devices.
                 This option is only available if KMSCON was compiled with
                 libseat support. Use --no-libseat to disable it.
-                (default: on)</para>
+                (default: off)</para>
         </listitem>
       </varlistentry>
     </variablelist>
@@ -185,14 +185,6 @@
           <para>Allow keyboard-shortcuts to control the session manager. This
                 allows the user to create new sessions, kill sessions and switch
                 sessions via keyboard input. (default: off)</para>
-        </listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--terminal-session</option></term>
-        <listitem>
-          <para>Start a terminal session after setup is done.
-                (default: on)</para>
         </listitem>
       </varlistentry>
     </variablelist>
@@ -219,6 +211,29 @@
 
           <para>This example starts '/bin/bash -i' on each new terminal session:
                 ./kmscon --login --debug --no-switchvt -- /bin/bash -i</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>--oneshot</option></term>
+        <listitem>
+          <para>When the login process exits, exit kmscon. This is useful for
+                setup scripts, or asking for disk encryption. (default: off)</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>--asciicast {path}</option></term>
+        <listitem>
+          <para>Play an asciicast animation after opening the terminal session.
+                The animation is stopped on keyboard input. (default: unset)</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>--asciicast-loop</option></term>
+        <listitem>
+          <para>Loop the asciicast animation. (default: off)</para>
         </listitem>
       </varlistentry>
 
@@ -261,6 +276,14 @@
           <para>Enable bell forwarding to the VT. When enabled, the BEL character
                 (0x07) from applications is forwarded to the underlying VT.
                 (default: off)</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>--blink</option></term>
+        <listitem>
+          <para>Enable cursor and text blink. When enabled, the cursor will blink on the screen,
+                and text with blink attribute will blink too. (default: on)</para>
         </listitem>
       </varlistentry>
     </variablelist>
@@ -460,14 +483,6 @@
         <listitem>
           <para>Switch to the previous session.
                 (default: &lt;Ctrl&gt;&lt;Logo&gt;Left)</para>
-        </listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--grab-session-dummy {grab}</option></term>
-        <listitem>
-          <para>Switch to a dummy session (blank screen).
-                (default: &lt;Ctrl&gt;&lt;Logo&gt;Escape)</para>
         </listitem>
       </varlistentry>
 
@@ -851,7 +866,7 @@
           Systems simultaneously. You can even use the linux-console on all the
           other virtual terminals.</para>
 
-    <para>By default, KMSCON runs on the current seat. (Often it is 
+    <para>By default, KMSCON runs on the current seat. (Often it is
           <emphasis>seat0</emphasis>). For seats without virtual terminals,
           KMSCON will automatically activate itself and run exclusively on that
           seat. If the virtual terminal or the seat that kmscon
@@ -886,16 +901,11 @@
   <refsect1>
     <title>Sessions</title>
     <para>If KMSCON is active on a seat, the internal session-manager is woken
-          up. At most times, only the terminal-session is active, but KMSCON can
-          also support any other session type. You can switch between sessions
-          with keyboard-shortcuts and you can create/destroy sessions during
-          runtime.</para>
+          up. At most times, only the terminal-session is active. You can switch
+          between sessions with keyboard-shortcuts and you can create/destroy
+          terminal sessions during runtime.</para>
 
-    <para>Dummy sessions simply show a black screen and are used if no other
-          session is available. Otherwise, dummy sessions are hidden from the
-          user so they cannot switch to it.</para>
-
-    <para>Terminal sessions provide a terminal emulator. They are the main
+    <para>Terminal sessions provide a terminal emulator. They are the only
           session type and provide all the terminal-emulation
           functionality.</para>
   </refsect1>

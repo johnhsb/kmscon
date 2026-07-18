@@ -504,23 +504,47 @@ err_free:
 
 SHL_EXPORT
 int input_set_keymap(struct input *input, const char *model, const char *layout,
-		     const char *variant, const char *options, const char *locale,
-		     const char *keymap, const char *compose_file, size_t compose_file_len)
+		     const char *variant, const char *options, const char *keymap)
 {
-	/* xkbcommon won't use the XKB_DEFAULT_OPTIONS environment
-	 * variable if options is an empty string.
-	 * So if all variables are empty, use NULL instead.
-	 */
-	if (model && *model == 0 && layout && *layout == 0 && variant && *variant == 0 && options &&
-	    *options == 0) {
-		model = NULL;
-		layout = NULL;
-		variant = NULL;
-		options = NULL;
-	}
+	return uxkb_layout_init(input, model, layout, variant, options, keymap);
+}
 
-	return uxkb_desc_init(input, model, layout, variant, options, locale, keymap, compose_file,
-			      compose_file_len);
+SHL_EXPORT
+void input_set_compose(struct input *input, const char *locale, const char *compose_file)
+{
+	uxkb_compose_table_init(input, compose_file, locale);
+}
+
+SHL_EXPORT
+int input_update_keymap(struct input *input, const char *model, const char *layout,
+			const char *variant, const char *options)
+{
+	struct shl_dlist *iter;
+	struct input_dev *dev;
+
+	if (input->ctx) {
+		shl_dlist_for_each(iter, &input->devices)
+		{
+			dev = shl_dlist_entry(iter, struct input_dev, list);
+			if (dev->capabilities & DEVICE_HAS_KEYS) {
+				input_sleep_dev(dev);
+				input_exit_keyboard(dev);
+			}
+		}
+	}
+	uxkb_compose_table_destroy(input);
+	uxkb_layout_destroy(input);
+	uxkb_layout_init(input, model, layout, variant, options, NULL);
+	shl_dlist_for_each(iter, &input->devices)
+	{
+		dev = shl_dlist_entry(iter, struct input_dev, list);
+		if (dev->capabilities & DEVICE_HAS_KEYS) {
+			input_init_keyboard(dev);
+			if (input->awake)
+				input_wake_up_dev(dev);
+		}
+	}
+	return 0;
 }
 
 SHL_EXPORT
@@ -565,7 +589,8 @@ void input_unref(struct input *input)
 		input_free_dev(dev);
 	}
 
-	uxkb_desc_destroy(input);
+	uxkb_compose_table_destroy(input);
+	uxkb_layout_destroy(input);
 	shl_hook_free(input->key_hook);
 	shl_hook_free(input->pointer_hook);
 	ev_eloop_rm_timer(input->hide_pointer);
@@ -657,6 +682,25 @@ void input_set_device_ops(struct input *input, uterm_open_cb open_cb, uterm_clos
 	input->open_cb = open_cb;
 	input->close_cb = close_cb;
 	input->data = data;
+}
+
+SHL_EXPORT
+unsigned int input_get_mods(struct input *input)
+{
+	struct shl_dlist *iter;
+	struct input_dev *dev;
+	unsigned int mods = 0;
+
+	if (!input)
+		return 0;
+	shl_dlist_for_each(iter, &input->devices)
+	{
+		dev = shl_dlist_entry(iter, struct input_dev, list);
+		if (dev->capabilities & DEVICE_HAS_KEYS)
+			mods |= uxkb_dev_get_mods(dev);
+	}
+
+	return mods;
 }
 
 SHL_EXPORT

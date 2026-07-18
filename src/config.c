@@ -33,8 +33,8 @@
 #include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include "conf.h"
-#include "kmscon_conf.h"
-#include "kmscon_issue.h"
+#include "config.h"
+#include "issue.h"
 #include "shl/githead.h"
 #include "shl/log.h"
 #include "shl/misc.h"
@@ -79,16 +79,20 @@ static void print_help()
 		"Session Options:\n"
 		"\t    --session-max <max>         [50]  Maximum number of sessions\n"
 		"\t    --session-control           [off] Allow keyboard session-control\n"
-		"\t    --terminal-session          [on]  Enable terminal session\n"
 		"\n"
 		"Terminal Options:\n"
-		"\t    --issue                 [on]\n"
+		"\t    --issue                 [off]\n"
 		"\t                              Display issue files before the\n"
-		"\t                              login prompt. Use --no-issue to\n"
-		"\t                              let the login process handle it.\n"
+		"\t                              login prompt.\n"
 		"\t    --issue-path <path>     [" ISSUE_DEFAULT_PATH "]\n"
 		"\t                              Colon-separated list of issue\n"
 		"\t                              files and directories to read\n"
+		"\t                              when using --issue\n"
+		"\t    --asciicast <path>\n"
+		"\t                              Play an asciicast animation after\n"
+		"\t                              opening the terminal session\n"
+		"\t    --asciicast-loop        [off]\n"
+		"\t                              Loop the asciicast animation\n"
 		"\t-l, --login                 [/bin/login -p]\n"
 		"\t                              Start the given login process instead\n"
 		"\t                              of the default process; all arguments\n"
@@ -96,7 +100,12 @@ static void print_help()
 		"\t                              argv to this process. No more options\n"
 		"\t                              after '--' will be parsed so use it at\n"
 		"\t                              the end of the argument string\n"
-		"\t-t, --term <TERM>           [kmscon]\n"
+		"\t    --oneshot                [off]\n"
+		"\t                              When the login process exits, exit kmscon\n"
+		"\t                              This is useful for setup scripts, or asking\n"
+		"\t                              for disk encryption.\n"
+		"\t                              (default: off)\n"
+		"\t-t, --term <TERM>           [" BUILD_DEFAULT_TERM "]\n"
 		"\t                              Value of the TERM environment variable\n"
 		"\t                              for the child process\n"
 		"\t    --reset-env             [on]\n"
@@ -109,6 +118,8 @@ static void print_help()
 		"\t                              Size of the scrollback-buffer in lines\n"
 		"\t    --bell                  [off]\n"
 		"\t                              Enable bell forwarding to the VT\n"
+		"\t    --blink                 [on]\n"
+		"\t                              Enable or disable cursor/text blinking\n"
 		"\n"
 		"Input Options:\n"
 		"\t    --xkb-model <model>        [-]  Set XkbModel for input devices\n"
@@ -149,8 +160,6 @@ static void print_help()
 		"\t                                  Switch to the next session\n"
 		"\t    --grab-session-prev <grab>  [<Ctrl><Logo>Left]\n"
 		"\t                                  Switch to the previous session\n"
-		"\t    --grab-session-dummy <grab> [<Ctrl><Logo>Escape]\n"
-		"\t                                  Switch to a dummy session\n"
 		"\t    --grab-session-close <grab> [<Ctrl><Logo>BackSpace]\n"
 		"\t                                  Close current session\n"
 		"\t    --grab-terminal-new <grab>  [<Ctrl><Logo>Return]\n"
@@ -669,9 +678,6 @@ static struct conf_grab def_grab_session_next =
 static struct conf_grab def_grab_session_prev =
 	CONF_SINGLE_GRAB(SHL_CONTROL_MASK | SHL_LOGO_MASK, XKB_KEY_Left);
 
-static struct conf_grab def_grab_session_dummy =
-	CONF_SINGLE_GRAB(SHL_CONTROL_MASK | SHL_LOGO_MASK, XKB_KEY_Escape);
-
 static struct conf_grab def_grab_session_close =
 	CONF_SINGLE_GRAB(SHL_CONTROL_MASK | SHL_LOGO_MASK, XKB_KEY_BackSpace);
 
@@ -735,31 +741,34 @@ int kmscon_conf_new(struct conf_ctx **out)
 		/* Seat Options */
 		CONF_OPTION(0, 0, "vt", &conf_vt, NULL, NULL, NULL, &conf->vt, NULL),
 		CONF_OPTION_BOOL(0, "switchvt", &conf->switchvt, true),
-		CONF_OPTION_BOOL(0, "libseat", &conf->libseat, true),
+		CONF_OPTION_BOOL(0, "libseat", &conf->libseat, false),
 
 		/* Session Options */
 		CONF_OPTION_UINT(0, "session-max", &conf->session_max, 50),
 		CONF_OPTION_BOOL(0, "session-control", &conf->session_control, false),
-		CONF_OPTION_BOOL(0, "terminal-session", &conf->terminal_session, true),
 
 		/* Terminal Options */
-		CONF_OPTION_BOOL(0, "issue", &conf->issue, true),
+		CONF_OPTION_BOOL(0, "issue", &conf->issue, false),
 		CONF_OPTION_STRING(0, "issue-path", &conf->issue_path, ISSUE_DEFAULT_PATH),
+		CONF_OPTION_STRING(0, "asciicast", &conf->asciicast, NULL),
+		CONF_OPTION_BOOL(0, "asciicast-loop", &conf->asciicast_loop, false),
 		CONF_OPTION(0, 'l', "login", &conf_login, aftercheck_login, NULL, file_login,
 			    &conf->login, false),
-		CONF_OPTION_STRING('t', "term", &conf->term, "kmscon"),
+		CONF_OPTION_BOOL(0, "oneshot", &conf->oneshot, false),
+		CONF_OPTION_STRING('t', "term", &conf->term, BUILD_DEFAULT_TERM),
 		CONF_OPTION_BOOL(0, "reset-env", &conf->reset_env, true),
 		CONF_OPTION_BOOL(0, "backspace-delete", &conf->backspace_delete, true),
 		CONF_OPTION_UINT(0, "sb-size", &conf->sb_size, 1000),
 		CONF_OPTION_BOOL(0, "bell", &conf->bell, false),
+		CONF_OPTION_BOOL(0, "blink", &conf->blink, true),
 
 		/* Input Options */
-		CONF_OPTION_STRING(0, "xkb-model", &conf->xkb_model, ""),
-		CONF_OPTION_STRING(0, "xkb-layout", &conf->xkb_layout, ""),
-		CONF_OPTION_STRING(0, "xkb-variant", &conf->xkb_variant, ""),
-		CONF_OPTION_STRING(0, "xkb-options", &conf->xkb_options, ""),
-		CONF_OPTION_STRING(0, "xkb-keymap", &conf->xkb_keymap, ""),
-		CONF_OPTION_STRING(0, "xkb-compose-file", &conf->xkb_compose_file, ""),
+		CONF_OPTION_STRING(0, "xkb-model", &conf->xkb_model, NULL),
+		CONF_OPTION_STRING(0, "xkb-layout", &conf->xkb_layout, NULL),
+		CONF_OPTION_STRING(0, "xkb-variant", &conf->xkb_variant, NULL),
+		CONF_OPTION_STRING(0, "xkb-options", &conf->xkb_options, NULL),
+		CONF_OPTION_STRING(0, "xkb-keymap", &conf->xkb_keymap, NULL),
+		CONF_OPTION_STRING(0, "xkb-compose-file", &conf->xkb_compose_file, NULL),
 		CONF_OPTION_UINT(0, "xkb-repeat-delay", &conf->xkb_repeat_delay, 250),
 		CONF_OPTION_UINT(0, "xkb-repeat-rate", &conf->xkb_repeat_rate, 50),
 		CONF_OPTION_BOOL(0, "mouse", &conf->mouse, true),
@@ -779,8 +788,6 @@ int kmscon_conf_new(struct conf_ctx **out)
 				 &def_grab_session_next),
 		CONF_OPTION_GRAB(0, "grab-session-prev", &conf->grab_session_prev,
 				 &def_grab_session_prev),
-		CONF_OPTION_GRAB(0, "grab-session-dummy", &conf->grab_session_dummy,
-				 &def_grab_session_dummy),
 		CONF_OPTION_GRAB(0, "grab-session-close", &conf->grab_session_close,
 				 &def_grab_session_close),
 		CONF_OPTION_GRAB(0, "grab-terminal-new", &conf->grab_terminal_new,
@@ -869,7 +876,7 @@ int kmscon_conf_load_main(struct conf_ctx *ctx, int argc, char **argv)
 
 	ret = conf_ctx_parse_argv(ctx, argc, argv);
 	if (ret)
-		return ret;
+		log_warn("Some wrong command line arguments ignored: %d\n", ret);
 
 	if (conf->exit)
 		return 0;

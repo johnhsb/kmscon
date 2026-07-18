@@ -175,7 +175,8 @@ static void display_done_modeset(struct display *disp, int status)
 {
 	struct drm2d_display *d2d = disp->data;
 	if (status) {
-		display_freefb(disp);
+		if (!display_is_online(disp))
+			display_freefb(disp);
 	} else {
 		d2d->current_rb = d2d->current_rb ^ 1;
 	}
@@ -229,7 +230,7 @@ static const struct display_ops drm2d_display_ops = {
 	.use = NULL,
 	.swap = drm2d_display_swap,
 	.is_swapping = drm_is_swapping,
-	.blendv = drm2d_display_blendv,
+	.blend = drm2d_display_blend,
 	.clear = drm2d_display_clear,
 	.set_damage = drm_display_set_damage,
 	.has_damage = drm_display_has_damage,

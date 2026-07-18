@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 project('kmscon', 'c',
-  version: '10.0.0',
+  version: '10.0.1',
   license: 'MIT',
   # meson 0.58: f-string
   # meson 0.62: dependency libdl
@@ -48,8 +48,7 @@ systemdsystemunitdir = systemd_deps.get_variable('systemdsystemunitdir', default
 fs = import('fs')
 
 xkbcommon_deps = dependency('xkbcommon', version: '>=0.5.0')
-libtsm_deps = dependency('libtsm', version: '>=4.5.0', allow_fallback: true)
-
+libtsm_deps = dependency('libtsm', version: '>=4.6.0', allow_fallback: true)
 libudev_deps = dependency('libudev', version: '>=172')
 dl_deps = dependency('dl')
 threads_deps = dependency('threads')
@@ -93,7 +92,6 @@ sections = {
   'video': 'Video Backends',
   'font': 'Font Backends',
   'renderer': 'Renderers',
-  'session': 'Session Types',
   'im': 'Input Methods',
 }
 config = configuration_data()
@@ -107,8 +105,6 @@ foreach name, reqs : {
   'font_unifont': [],
   'font_freetype': [freetype_deps, fontconfig_deps],
   'font_pango': [pango_deps],
-  'session_dummy': [],
-  'session_terminal': [],
   'dbus': [dbus_deps],
   'im_hangul': [libhangul_deps],
 }
@@ -129,6 +125,9 @@ endforeach
 config.set('BUILD_ENABLE_DEBUG', get_option('extra_debug'))
 config.set_quoted('BUILD_MODULE_DIR', prefix / moduledir)
 config.set_quoted('BUILD_CONFIG_DIR', prefix / sysconfdir)
+
+# Default $TERM value
+config.set_quoted('BUILD_DEFAULT_TERM', get_option('term'))
 
 # Make all files include "config.h" by default. This shouldn't cause any
 # problems and we cannot forget to include it anymore.
@@ -152,7 +151,7 @@ if xsltproc.found()
 else
   docs_error_string = 'executable xsltproc was not found.'
 endif
-enable_docs = get_option('docs').require(xsltproc.found() and have_manpages_stylesheet, 
+enable_docs = get_option('docs').require(xsltproc.found() and have_manpages_stylesheet,
   error_message: docs_error_string).allowed()
 
 # Additionally check if glesv2 is needed

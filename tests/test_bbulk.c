@@ -40,14 +40,11 @@ unsigned int kmscon_font_get_height(const struct kmscon_font *font)
 }
 
 /* Stub font rendering APIs used by text_bbulk.c */
-struct kmscon_glyph *kmscon_font_render(struct kmscon_font *font, uint64_t id, const uint32_t *ch,
-					size_t len)
+struct kmscon_glyph *kmscon_font_render(struct kmscon_font *font, const uint32_t ch)
 {
 	struct kmscon_glyph *g;
 	(void)font;
-	(void)id;
 	(void)ch;
-	(void)len;
 	g = malloc(sizeof(*g) + FAKE_CELL_W * FAKE_CELL_W);
 	memset(g, 0, sizeof(*g) + FAKE_CELL_W * FAKE_CELL_W);
 	g->buf.width = g->buf.height = FAKE_CELL_W;
@@ -55,11 +52,10 @@ struct kmscon_glyph *kmscon_font_render(struct kmscon_font *font, uint64_t id, c
 	return g;
 }
 
-bool kmscon_font_has_glyph(struct kmscon_font *font, const uint32_t *ch, size_t len)
+bool kmscon_font_has_glyph(struct kmscon_font *font, const uint32_t ch)
 {
 	(void)font;
 	(void)ch;
-	(void)len;
 	return true;
 }
 
@@ -102,11 +98,10 @@ int display_clear(struct display *disp, uint8_t r, uint8_t g, uint8_t b)
 	(void)b;
 	return 0;
 }
-int display_blendv(struct display *disp, const struct video_blend_req *req, size_t num)
+int display_blend(struct display *disp, const struct video_blend_req *req)
 {
 	(void)disp;
 	(void)req;
-	(void)num;
 	return 0;
 }
 void display_set_damage(struct display *disp, size_t n_rect, struct video_rect *damages)
@@ -124,6 +119,8 @@ void display_set_cursor_offset(struct display *disp, int32_t x, int32_t y)
 #include "shl/log.h"
 #undef log_warning
 #define log_warning(f, ...)
+#undef log_debug
+#define log_debug(f, ...)
 /* Pull in the implementation so we can call bbulk_set directly */
 #include "../src/render/bbulk.c"
 
@@ -155,22 +152,20 @@ int main(void)
 	/* First call allocates */
 	ret = bbulk_set(&txt);
 	assert(ret == 0);
-	assert(bb->reqs && bb->prev && bb->damages && bb->damage_rects);
-	unsigned int prev_cells = bb->cells;
+	unsigned int prev_cells = bb->cell_count;
 
 	bbulk_unset(&txt);
 
 	/* Second call with identical geometry should remain valid and fully damaged */
 	ret = bbulk_set(&txt);
 	assert(ret == 0);
-	assert(bb->cells == prev_cells);
-	assert(bb->reqs != NULL);
-	assert(bb->prev != NULL);
-	assert(bb->damages != NULL);
+	assert(bb->cell_count == prev_cells);
+	assert(bb->cells != NULL);
+	assert(bb->cell_flags != NULL);
 	assert(bb->damage_rects != NULL);
 	/* All cells should be marked damaged */
-	for (unsigned i = 0; i < bb->cells; ++i)
-		assert(bb->prev[i].id == ID_DAMAGED);
+	for (unsigned i = 0; i < bb->cell_count; ++i)
+		assert(bb->cells[i].ch == ID_DAMAGED);
 
 	/* Exercise prepare/render + damage path */
 	struct tsm_screen_attr attr;
@@ -182,9 +177,8 @@ int main(void)
 	assert(bb->damage_rect_len > 0);
 
 	bbulk_unset(&txt);
-	assert(bb->reqs == NULL);
-	assert(bb->prev == NULL);
-	assert(bb->damages == NULL);
+	assert(bb->cells == NULL);
+	assert(bb->cell_flags == NULL);
 	assert(bb->damage_rects == NULL);
 	kmscon_text_bbulk_ops.destroy(&txt);
 	return 0;

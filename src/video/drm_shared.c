@@ -859,8 +859,11 @@ static int perform_modeset(struct video *video)
 	struct drm_video *vdrm = video->data;
 	struct display *disp;
 	struct drm_display *ddrm;
+	size_t num_prepared = 0;
+	size_t i = 0;
 	int flags;
 	int ret = 0;
+	bool refs_taken = false;
 
 	/* prepare modeset on all outputs */
 	req = drmModeAtomicAlloc();
@@ -882,24 +885,11 @@ static int perform_modeset(struct video *video)
 		ret = ddrm->prepare_modeset(disp, req);
 		if (ret < 0)
 			break;
+		++num_prepared;
 	}
 	if (ret < 0) {
 		log_err("prepare atomic commit failed, %d\n", ret);
-		return ret;
-	}
-
-	/*
-	 * Take a ref on each display before any commit attempt so that
-	 * display_unref() in the error path is always balanced.  Previously
-	 * the refs were taken only after the test-only commit succeeded, which
-	 * meant a goto err_commit from the test-only failure skipped
-	 * display_ref() while err_commit still called display_unref(), causing
-	 * a refcount underflow, premature free(), and SEGV on retry.
-	 */
-	shl_dlist_for_each(iter, &video->displays)
-	{
-		disp = shl_dlist_entry(iter, struct display, list);
-		display_ref(disp);
+		goto err_commit;
 	}
 
 	/* perform test-only atomic commit */
@@ -911,6 +901,13 @@ static int perform_modeset(struct video *video)
 		goto err_commit;
 	}
 
+	shl_dlist_for_each(iter, &video->displays)
+	{
+		disp = shl_dlist_entry(iter, struct display, list);
+		display_ref(disp);
+	}
+	refs_taken = true;
+
 	/* initial modeset on all outputs */
 	flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
 	ret = drmModeAtomicCommit(vdrm->fd, req, flags, video);
@@ -920,14 +917,17 @@ static int perform_modeset(struct video *video)
 err_commit:
 	drmModeAtomicFree(req);
 
+	i = 0;
 	shl_dlist_for_each(iter, &video->displays)
 	{
+		if (i++ >= num_prepared)
+			break;
 		disp = shl_dlist_entry(iter, struct display, list);
 		ddrm = disp->data;
 		ddrm->done_modeset(disp, ret);
 		if (ret) {
-			disp->flags &= ~DISPLAY_ONLINE;
-			display_unref(disp);
+			if (refs_taken)
+				display_unref(disp);
 		} else
 			disp->flags |= DISPLAY_ONLINE | DISPLAY_VSYNC | DISPLAY_NEED_REDRAW;
 	}
@@ -989,17 +989,32 @@ static int try_modeset(struct video *video)
 	if (ret != -EAGAIN)
 		return ret;
 
+	if (shl_dlist_empty(&video->displays))
+		return ret;
+
 	/* Retry with default mode for all display */
 	shl_dlist_for_each(iter, &video->displays)
 	{
 		disp = shl_dlist_entry(iter, struct display, list);
 		ddrm = disp->data;
+		ddrm->previous_mode = ddrm->current_mode;
 		ddrm->current_mode = &ddrm->default_mode;
 	}
 	if (vdrm->legacy)
-		return legacy_modeset(video);
+		ret = legacy_modeset(video);
 	else
-		return perform_modeset(video);
+		ret = perform_modeset(video);
+
+	shl_dlist_for_each(iter, &video->displays)
+	{
+		disp = shl_dlist_entry(iter, struct display, list);
+		ddrm = disp->data;
+		if (ret)
+			ddrm->current_mode = ddrm->previous_mode;
+		ddrm->previous_mode = NULL;
+	}
+
+	return ret;
 }
 
 static int legacy_pageflip(int fd, struct display *disp, uint32_t fb)
@@ -1438,7 +1453,7 @@ int drm_video_hotplug(struct video *video, bool read_dpms, bool modeset)
 	struct drm_display *ddrm;
 	int ret, i, dpms;
 	struct shl_dlist *iter, *tmp;
-	bool new_display = false;
+	bool needs_modeset = modeset;
 
 	if (!video_is_awake(video) || !video_need_hotplug(video))
 		return 0;
@@ -1476,8 +1491,10 @@ int drm_video_hotplug(struct video *video, bool read_dpms, bool modeset)
 
 			disp->flags |= DISPLAY_AVAILABLE;
 
-			if (!display_is_online(disp))
+			if (!display_is_online(disp)) {
+				needs_modeset = true;
 				break;
+			}
 
 			if (read_dpms) {
 				dpms = drm_get_dpms(vdrm->fd, conn);
@@ -1490,7 +1507,7 @@ int drm_video_hotplug(struct video *video, bool read_dpms, bool modeset)
 		}
 
 		if (iter == &video->displays) {
-			new_display = true;
+			needs_modeset = true;
 			bind_display(video, res, conn);
 		}
 		drmModeFreeConnector(conn);
@@ -1510,7 +1527,7 @@ int drm_video_hotplug(struct video *video, bool read_dpms, bool modeset)
 		goto finish_hotplug;
 	}
 
-	if (modeset || new_display) {
+	if (needs_modeset) {
 		ret = try_modeset(video);
 		if (ret)
 			return ret;
@@ -1573,8 +1590,13 @@ void drm_video_sleep(struct video *video)
 
 int drm_video_poll(struct video *video)
 {
+	int ret;
+
 	video->flags |= VIDEO_HOTPLUG;
-	return drm_video_hotplug(video, false, false);
+	ret = drm_video_hotplug(video, false, false);
+	if (ret)
+		drm_video_arm_vt_timer(video);
+	return ret;
 }
 
 /* Waits for events on DRM fd for \mtimeout milliseconds and returns 0 if the

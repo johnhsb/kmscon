@@ -1,5 +1,5 @@
 /*
- * kmscon - Vertex Shader
+ * kmscon - Terminal
  *
  * Copyright (c) 2011-2012 David Herrmann <dh.herrmann@googlemail.com>
  * Copyright (c) 2011 University of Tuebingen
@@ -25,18 +25,29 @@
  */
 
 /*
- * Vertex Shader
- * This shader is a very basic vertex shader which forwards all data and
- * performs basic matrix multiplications.
+ * Terminal
+ * This provides the basic terminal object. This ties together the vt emulation
+ * and the output console.
  */
 
-uniform mat4 projection;
-attribute vec2 position;
-attribute vec2 texture_position;
-varying vec2 texpos;
+#ifndef KMSCON_TERMINAL_H
+#define KMSCON_TERMINAL_H
 
-void main()
-{
-	gl_Position = projection * vec4(position, 0.0, 1.0);
-	texpos = texture_position;
-}
+struct conf_ctx;
+struct display;
+struct ev_eloop;
+struct kmscon_terminal;
+struct kmscon_session;
+struct input;
+
+struct kmscon_terminal *terminal_new(struct kmscon_session *session, unsigned int vtnr,
+				     struct conf_ctx *conf_ctx, struct ev_eloop *eloop,
+				     struct input *input, const char *seat_name);
+void terminal_destroy(struct kmscon_terminal *term);
+int terminal_add_display(struct kmscon_terminal *term, struct display *disp);
+void terminal_rm_display(struct kmscon_terminal *term, struct display *disp);
+void terminal_refresh_displays(struct kmscon_terminal *term);
+void terminal_activate(struct kmscon_terminal *term);
+void terminal_deactivate(struct kmscon_terminal *term);
+
+#endif /* KMSCON_TERMINAL_H */

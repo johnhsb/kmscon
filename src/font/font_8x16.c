@@ -108,24 +108,17 @@ static struct kmscon_glyph *new_glyph(uint32_t ch)
 	return glyph;
 }
 
-static bool kmscon_font_8x16_has_glyph(struct kmscon_font *font, const uint32_t *ch, size_t len)
+static bool kmscon_font_8x16_has_glyph(struct kmscon_font *font, uint32_t ch)
 {
-	return (len == 1 && *ch < 256);
+	return (ch < 256);
 }
 
-static struct kmscon_glyph *kmscon_font_8x16_render(struct kmscon_font *font, uint64_t id,
-						    const uint32_t *ch, size_t len)
+static struct kmscon_glyph *kmscon_font_8x16_render(struct kmscon_font *font, uint32_t ch)
 {
-	uint32_t c = *ch;
+	if (ch >= 256)
+		return new_glyph('?');
 
-	// Handle replacement character
-	if (c == 0xfffd)
-		c = '?';
-
-	if (len > 1 || *ch >= 256)
-		return NULL;
-
-	return new_glyph(*ch);
+	return new_glyph(ch);
 }
 
 struct kmscon_font_ops kmscon_font_8x16_ops = {

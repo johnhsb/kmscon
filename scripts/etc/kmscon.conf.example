@@ -66,7 +66,6 @@
 #grab-zoom-out=<Ctrl>Minus
 #grab-session-next=<Ctrl><Logo>Right
 #grab-session-prev=<Ctrl><Logo>Left
-#grab-session-dummy=<Ctrl><Logo>Escape
 #grab-session-close=<Ctrl><Logo>BackSpace
 #grab-terminal-new=<Ctrl><Logo>Return
 #grab-rotate-cw=<Logo>Plus
@@ -89,6 +88,13 @@
 #dpms-timeout=600
 
 ## Terminal options
+## Play an asciicast animation after opening the terminal session.
+## The animation stops on keyboard input.
+#asciicast=/usr/share/kmscon/login.cast
+
+## Loop the asciicast animation.
+#asciicast-loop
+
 ## value of the $TERM variable
 #term=kmscon
 
@@ -103,6 +109,9 @@
 
 ## Forward BEL (0x07) to the VT (default off)
 #bell
+
+## Blinking cursor and text with blink attribute (enabled by default)
+#blink
 
 ## Colors palette, one of [solarized, solarized-black, solarized-white,
 ## soft-black, base16-dark, base16-light, vga, legacy, custom]

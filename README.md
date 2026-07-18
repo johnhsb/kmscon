@@ -3,7 +3,7 @@
 [![Build Status](https://github.com/johnhsb/kmscon-hangul/actions/workflows/meson.yml/badge.svg?branch=main)](https://github.com/johnhsb/kmscon-hangul/actions/workflows/meson.yml)
 [![Release](https://img.shields.io/github/v/release/johnhsb/kmscon-hangul)](https://github.com/johnhsb/kmscon-hangul/releases/latest)
 
-[kmscon](https://github.com/kmscon/kmscon) v10.0.0 기반 한글 입력 지원 및 버그 수정 포크.
+[kmscon](https://github.com/kmscon/kmscon) v10.0.1 기반 한글 입력 지원 및 버그 수정 포크.
 
 Kmscon is a simple terminal emulator based on linux kernel mode setting (KMS).
 It is an attempt to replace the in-kernel VT implementation with a userspace console.
@@ -77,7 +77,7 @@ sudo apt install \
 ```bash
 git clone https://github.com/johnhsb/kmscon-hangul.git
 cd kmscon-hangul
-git clone --depth 1 --branch v4.5.0 https://github.com/kmscon/libtsm subprojects/libtsm
+git clone --depth 1 --branch v4.6.0 https://github.com/kmscon/libtsm subprojects/libtsm
 meson setup builddir/ \
   --prefix=/usr \
   -Dim_hangul=enabled \
@@ -91,7 +91,7 @@ meson install -C builddir/
 
 ```bash
 sudo apt install debhelper devscripts
-git clone --depth 1 --branch v4.5.0 https://github.com/kmscon/libtsm subprojects/libtsm
+git clone --depth 1 --branch v4.6.0 https://github.com/kmscon/libtsm subprojects/libtsm
 dpkg-buildpackage -us -uc -b
 ```
 
@@ -110,11 +110,12 @@ dpkg-buildpackage -us -uc -b
 | `font_pango` | `auto` | Pango 폰트 렌더러 |
 | `renderer_gltex` | `auto` | OpenGLESv2 가속 렌더러 |
 | `docs` | `auto` | 맨페이지 및 문서 빌드 |
+| `term` | `kmscon` | 기본 `$TERM` 값 |
 
 ## Requirements
 
 ### Mandatory
-- [libtsm](https://github.com/kmscon/libtsm) v4.5.0 (정적 링크, 별도 설치 불필요)
+- [libtsm](https://github.com/kmscon/libtsm) v4.6.0 (정적 링크, 별도 설치 불필요)
 - [libudev](https://www.freedesktop.org/software/systemd/man/libudev.html) >= v172
 - [libxkbcommon](https://xkbcommon.org/)
 - **linux-headers**
@@ -134,10 +135,39 @@ dpkg-buildpackage -us -uc -b
 모든 커맨드라인 옵션을 `--` 없이 설정 파일에 기재할 수 있습니다.
 예시: [kmscon.conf](scripts/etc/kmscon.conf.example)
 
+## Differences from fbcon
+### Loadkeys
+
+loadkeys doesn't work in kmscon, as it doesn't use the kernel tty for input.
+You can configure the layout in kmscon.conf, or in the command line.
+If you build kmscon with dbus support, you can also change the layout at runtime with `localectl set-keymap <keymap>`
+
+### setfont
+
+setfont doesn't work, as it sets the kernel font.
+you can configure the font in kmscon.conf
+```
+font-engine=freetype
+font-size=18
+# font-name is only for freetype/pango. Unifont and 8x16 uses their own bitmap.
+font-name=Hack Nerd Font
+```
+
+### GUI application
+
+As kmscon is already using the GPU, starting a Desktop environment, or a graphic application won't work, as it won't be able to take the GPU.
+There is a script, kmscon-launch-gui that put kmscon in the background, and is able to start a gui application.
+
+`kmscon-launch-gui kmscube -c 100`
+
+For some application like mpv, you need an additional wayland compositor, or the keyboard input won't work.
+
+`kmscon-launch-gui cage -- mpv test.mp4`
+
 ## License
 
 MIT License. 자세한 내용은 [`COPYING`](./COPYING) 참조.
 
 ## Upstream
 
-이 저장소는 [kmscon/kmscon](https://github.com/kmscon/kmscon) v10.0.0을 기반으로 합니다.
+이 저장소는 [kmscon/kmscon](https://github.com/kmscon/kmscon) v10.0.1을 기반으로 합니다.

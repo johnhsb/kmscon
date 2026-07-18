@@ -1,8 +1,8 @@
 /*
- * kmscon - Fragment Shader
+ * dbus - D-Bus support
  *
- * Copyright (c) 2011-2012 David Herrmann <dh.herrmann@googlemail.com>
- * Copyright (c) 2011 University of Tuebingen
+ * Copyright (c) 2026 Red Hat.
+ * Author: Jocelyn Falempe <jfalempe@redhat.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -24,21 +24,38 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*
- * Fragment Shader
- * A basic fragment shader which applies a 2D texture.
- */
+#ifndef _KMSCON_DBUS_H
+#define _KMSCON_DBUS_H
 
-precision mediump float;
+struct ev_eloop;
+struct kmscon_dbus;
 
-uniform sampler2D texture;
-uniform vec3 fgcolor;
-uniform vec3 bgcolor;
-varying vec2 texpos;
+typedef void (*dbus_update_xkb_layout_cb)(const char *model, const char *layout,
+					  const char *variant, const char *options, void *data);
 
-void main()
+#ifdef BUILD_ENABLE_DBUS
+void kmscon_dbus_set_xkb_env_from_locale1(struct kmscon_dbus *dbus);
+struct kmscon_dbus *kmscon_dbus_new(struct ev_eloop *eloop);
+void kmscon_dbus_free(struct kmscon_dbus *dbus);
+int kmscon_dbus_listen_locale1(struct kmscon_dbus *dbus, dbus_update_xkb_layout_cb cb, void *data);
+
+#else
+static inline void kmscon_dbus_set_xkb_env_from_locale1(struct kmscon_dbus *dbus)
 {
-	float alpha = texture2D(texture, texpos).a;
-	vec3 val = alpha * fgcolor + (1.0 - alpha) * bgcolor;
-	gl_FragColor = vec4(val, 1.0);
+	return;
 }
+static inline struct kmscon_dbus *kmscon_dbus_new(struct ev_eloop *eloop)
+{
+	return NULL;
+}
+static inline void kmscon_dbus_free(struct kmscon_dbus *dbus)
+{
+	return;
+}
+static inline int kmscon_dbus_listen_locale1(struct kmscon_dbus *dbus, dbus_update_xkb_layout_cb cb,
+					     void *data)
+{
+	return 0;
+}
+#endif /* BUILD_ENABLE_DBUS */
+#endif /* _KMSCON_DBUS_H */

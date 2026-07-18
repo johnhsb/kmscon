@@ -1,3 +1,24 @@
+kmscon-hangul (10.0.1-1) unstable; urgency=medium
+
+  * New upstream base: kmscon v10.0.1 (was v10.0.0)
+  * Merge upstream session-management simplification: kmscon_session event
+    callback removed; terminal now driven by direct terminal_activate() /
+    terminal_deactivate() / terminal_add_display() / terminal_rm_display()
+    calls from seat.c. IM composition flush-on-deactivate moved into
+    terminal_deactivate() accordingly.
+  * Merge upstream text-renderer simplification (tsm_screen_draw2 /
+    kmscon_text_draw(txt, con)); rewrite IM preedit overlay to patch a copy
+    of the whole-screen cell array instead of injecting via the old
+    per-cell draw callback.
+  * Merge upstream terminal blink support, ctrl+wheel zoom, and asciicast
+    playback (unrelated to Hangul IM, carried through unchanged)
+  * video/drm: drop our perform_modeset() use-after-free fix in favor of
+    upstream's equivalent fix (refs_taken guard), which was added
+    independently upstream for the same bug
+  * Update libtsm subproject to v4.6.0 (statically linked)
+
+ -- JohnnyB <johnhsb@outlook.kr>  Sat, 18 Jul 2026 00:00:00 +0900
+
 kmscon-hangul (10.0.0-3) unstable; urgency=medium
 
   * Remove unnecessary libtsm.so, libtsm.h, libtsm.pc from package

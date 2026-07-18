@@ -1,7 +1,7 @@
 /*
- * kmscon - Dummy Session
+ * kmscon - /etc/issue display
  *
- * Copyright (c) 2012 David Herrmann <dh.herrmann@googlemail.com>
+ * Copyright (c) 2025 Alberto Ruiz <aruiz@redhat.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -23,28 +23,19 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#ifndef KMSCON_ISSUE_H
+#define KMSCON_ISSUE_H
+
 /*
- * Dummy Session
+ * Default search path, matching agetty's default.
+ *
+ * Distros can override this with --issue-path or the issue-path config
+ * option using a colon-separated list.  Plain files are read directly;
+ * directories are scanned for *.issue files in lexicographic order.
  */
+#define ISSUE_DEFAULT_PATH                                                                         \
+	"/etc/issue:/etc/issue.d:/run/issue:/run/issue.d:/usr/lib/issue:/usr/lib/issue.d"
 
-#ifndef KMSCON_DUMMY_H
-#define KMSCON_DUMMY_H
+char *kmscon_issue_get_buffer(const char *search_path, char *pty_name, size_t *len);
 
-#include <errno.h>
-#include <stdlib.h>
-#include "kmscon_seat.h"
-
-#ifdef BUILD_ENABLE_SESSION_DUMMY
-
-int kmscon_dummy_register(struct kmscon_session **out, struct kmscon_seat *seat);
-
-#else /* !BUILD_ENABLE_SESSION_DUMMY */
-
-static inline int kmscon_dummy_register(struct kmscon_session **out, struct kmscon_seat *seat)
-{
-	return -EOPNOTSUPP;
-}
-
-#endif /* BUILD_ENABLE_SESSION_DUMMY */
-
-#endif /* KMSCON_DUMMY_H */
+#endif /* KMSCON_ISSUE_H */

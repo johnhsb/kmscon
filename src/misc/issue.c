@@ -24,14 +24,16 @@
  */
 
 #include <glob.h>
-#include <libtsm.h>
+#include <net/if.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/utsname.h>
 #include <time.h>
-#include "kmscon_issue.h"
-#include "pty.h"
+#include "issue.h"
+#include "issue_network.h"
+#include "shl/log.h"
 
 /* Cap total collected issue text to prevent runaway allocation. */
 #define ISSUE_MAX_SIZE (256u * 1024u)
@@ -108,54 +110,98 @@ static char *read_os_release_field(const char *field)
 	return NULL;
 }
 
-static size_t append_file(FILE *out, const char *path, size_t limit)
+#define MAX_FILES 64
+#define CHUNK_SIZE 4096
+struct issue_parser {
+	size_t limit;
+	char *parsed[MAX_FILES];
+	int n_parsed_files;
+};
+
+static const char *bname(const char *path)
+{
+	const char *p = strrchr(path, '/');
+	return p ? p + 1 : (char *)path;
+}
+
+static bool is_masked(const char *path, const struct issue_parser *parser)
+{
+	const char *b = bname(path);
+
+	for (int i = 0; i < parser->n_parsed_files; i++)
+		if (strcmp(b, parser->parsed[i]) == 0)
+			return true;
+	return false;
+}
+
+static void add_parsed_file(struct issue_parser *parser, const char *path)
+{
+	if (parser->n_parsed_files < MAX_FILES - 1)
+		parser->parsed[parser->n_parsed_files++] = strdup(bname(path));
+}
+
+static void free_parser(struct issue_parser *parser)
+{
+	for (int i = 0; i < parser->n_parsed_files; i++)
+		free(parser->parsed[i]);
+	parser->n_parsed_files = 0;
+}
+
+static void append_file(FILE *out, const char *path, struct issue_parser *parser)
 {
 	FILE *fp;
-	char buf[4096];
-	size_t n, total = 0;
+	char buf[CHUNK_SIZE];
+	size_t n;
 
-	if (!limit)
-		return 0;
+	if (!parser->limit)
+		return;
+
+	// Ignore files that have the same name as a parsed file
+	// so /etc/issue takes precedence over /run/issue and /usr/lib/issue
+	if (is_masked(path, parser)) {
+		log_debug("Ignoring masked file: %s", path);
+		return;
+	}
 
 	fp = fopen(path, "r");
 	if (!fp)
-		return 0;
+		return;
 
-	while (total < limit) {
-		size_t chunk = sizeof(buf);
-		if (chunk > limit - total)
-			chunk = limit - total;
+	add_parsed_file(parser, path);
+
+	while (parser->limit) {
+		size_t chunk = CHUNK_SIZE;
+		if (chunk > parser->limit)
+			chunk = parser->limit;
 		n = fread(buf, 1, chunk, fp);
 		if (!n)
 			break;
 		fwrite(buf, 1, n, out);
-		total += n;
+		parser->limit -= n;
 	}
-
+	log_debug("Parse issue file %s", path);
 	fclose(fp);
-	return total;
 }
 
-static size_t append_dir(FILE *out, const char *dir, size_t limit)
+static void append_dir(FILE *out, const char *dir, struct issue_parser *parser)
 {
 	glob_t gl;
 	char *pattern;
-	size_t i, total = 0;
+	int i;
 
 	if (asprintf(&pattern, "%s/*.issue", dir) < 0)
-		return 0;
+		return;
 
 	if (glob(pattern, 0, NULL, &gl) != 0) {
 		free(pattern);
-		return 0;
+		return;
 	}
 	free(pattern);
 
-	for (i = 0; i < gl.gl_pathc && total < limit; i++)
-		total += append_file(out, gl.gl_pathv[i], limit - total);
+	for (i = 0; i < gl.gl_pathc && parser->limit; i++)
+		append_file(out, gl.gl_pathv[i], parser);
 
 	globfree(&gl);
-	return total;
 }
 
 /*
@@ -166,9 +212,11 @@ static size_t append_dir(FILE *out, const char *dir, size_t limit)
 static char *collect_issue_text(const char *search_path, size_t *out_len)
 {
 	FILE *mem;
+	struct stat sb;
 	char *buf = NULL;
-	size_t len = 0, total = 0;
+	size_t len = 0;
 	char *dup, *saveptr, *entry;
+	struct issue_parser parser = {.limit = ISSUE_MAX_SIZE, .n_parsed_files = 0};
 
 	if (!search_path || !*search_path)
 		return NULL;
@@ -183,14 +231,16 @@ static char *collect_issue_text(const char *search_path, size_t *out_len)
 		return NULL;
 	}
 
-	for (entry = strtok_r(dup, ":", &saveptr); entry && total < ISSUE_MAX_SIZE;
+	for (entry = strtok_r(dup, ":", &saveptr); entry && parser.limit;
 	     entry = strtok_r(NULL, ":", &saveptr)) {
-		size_t n = append_file(mem, entry, ISSUE_MAX_SIZE - total);
-		if (!n)
-			n = append_dir(mem, entry, ISSUE_MAX_SIZE - total);
-		total += n;
+		if (stat(entry, &sb) != 0)
+			continue;
+		if (S_ISDIR(sb.st_mode))
+			append_dir(mem, entry, &parser);
+		else
+			append_file(mem, entry, &parser);
 	}
-
+	free_parser(&parser);
 	free(dup);
 	fclose(mem);
 
@@ -203,32 +253,37 @@ static char *collect_issue_text(const char *search_path, size_t *out_len)
 	return buf;
 }
 
-static void expand_os_release(const char **ppos, const char *end, FILE *out)
+static bool get_parameter(const char **ppos, const char *end, char *parameter, size_t len)
 {
 	const char *pos = *ppos;
+	size_t l = 0;
+
+	parameter[0] = '\0';
+	if (pos >= end || *pos != '{')
+		return false;
+	pos++;
+	while (pos < end && *pos != '}' && l < len - 1)
+		parameter[l++] = *pos++;
+	parameter[l++] = '\0';
+	pos++;
+	*ppos = pos;
+	return true;
+}
+
+static void expand_os_release(const char **ppos, const char *end, FILE *out)
+{
+	char field_name[64];
 	char *field_val;
 
-	if (pos < end && *pos == '{') {
-		char field_name[64];
-		char *fe = field_name;
-		pos++;
-		while (pos < end && *pos != '}' && fe < field_name + sizeof(field_name) - 1)
-			*fe++ = *pos++;
-		*fe = '\0';
-		while (pos < end && *pos != '}')
-			pos++;
-		if (pos < end && *pos == '}')
-			pos++;
-		field_val = read_os_release_field(field_name);
-	} else {
+	if (!get_parameter(ppos, end, field_name, sizeof(field_name)))
 		field_val = read_os_release_field("PRETTY_NAME");
-	}
+	else
+		field_val = read_os_release_field(field_name);
 
 	if (field_val) {
 		fputs(field_val, out);
 		free(field_val);
 	}
-	*ppos = pos;
 }
 
 /* Write literal text to out, converting \n to \r\n for the terminal. */
@@ -304,32 +359,39 @@ const char *color_sequence_from_colorname(const char *str)
 
 static void expand_color(const char **ppos, const char *end, FILE *out)
 {
-	const char *pos = *ppos;
 	const char *color_escape = NULL;
 	char color_name[16]; // longest color name is 13 characters
-	char *cn = color_name;
 
 	fputs("\033", out);
-	if (pos >= end || *pos != '{')
+
+	if (!get_parameter(ppos, end, color_name, sizeof(color_name)))
 		return;
 
-	pos++;
-	while (pos < end && *pos != '}' && cn < color_name + sizeof(color_name) - 1)
-		*cn++ = *pos++;
-	*cn = '\0';
-	while (pos < end && *pos != '}')
-		pos++;
-	if (pos < end && *pos == '}') {
-		pos++;
-		color_escape = color_sequence_from_colorname(color_name);
-	}
+	color_escape = color_sequence_from_colorname(color_name);
 	if (color_escape)
 		fputs(color_escape, out);
-	*ppos = pos;
 }
 
-static void expand_issue(const char *raw, size_t raw_len, struct tsm_vte *vte,
-			 struct kmscon_pty *pty)
+static void expand_ip(const char **ppos, const char *end, FILE *out, struct addr_book *book,
+		      bool ipv6)
+{
+	char interface_name[IFNAMSIZ];
+
+	get_parameter(ppos, end, interface_name, sizeof(interface_name));
+	fputs(issue_network_get_best_ip(book, interface_name, ipv6), out);
+}
+
+static void expand_all_ip(const char **ppos, const char *end, FILE *out, struct addr_book *book,
+			  bool filter)
+{
+	char *text;
+
+	text = issue_network_get_all_ip(book, filter);
+	fputs(text, out);
+	free(text);
+}
+
+static char *expand_issue(const char *raw, size_t raw_len, char *pty_name, size_t *out_len)
 {
 	FILE *out;
 	char *obuf = NULL;
@@ -340,13 +402,13 @@ static void expand_issue(const char *raw, size_t raw_len, struct tsm_vte *vte,
 	const char *pos, *end, *esc;
 	char timebuf[64];
 	char datebuf[64];
-	char tty_name[128];
 	const char *tty_short;
-	const char *escape_val[128] = {0};
+	char code;
+	struct addr_book *book = NULL;
 
 	out = open_memstream(&obuf, &olen);
 	if (!out)
-		return;
+		return NULL;
 
 	if (uname(&uts) < 0)
 		memset(&uts, 0, sizeof(uts));
@@ -361,22 +423,10 @@ static void expand_issue(const char *raw, size_t raw_len, struct tsm_vte *vte,
 		datebuf[0] = '\0';
 	}
 
-	tty_name[0] = '\0';
-	kmscon_pty_get_slave_name(pty, tty_name, sizeof(tty_name));
-	tty_short = tty_name;
-	if (!strncmp(tty_short, "/dev/", 5))
-		tty_short += 5;
-
-	escape_val['\\'] = "\\";
-	escape_val['s'] = uts.sysname;
-	escape_val['n'] = uts.nodename;
-	escape_val['r'] = uts.release;
-	escape_val['v'] = uts.version;
-	escape_val['m'] = uts.machine;
-	escape_val['o'] = uts.domainname[0] ? uts.domainname : "(none)";
-	escape_val['d'] = datebuf;
-	escape_val['t'] = timebuf;
-	escape_val['l'] = tty_short;
+	if (!strncmp(pty_name, "/dev/", 5))
+		tty_short = pty_name + 5;
+	else
+		tty_short = pty_name;
 
 	pos = raw;
 	end = raw + raw_len;
@@ -392,40 +442,95 @@ static void expand_issue(const char *raw, size_t raw_len, struct tsm_vte *vte,
 		if (pos >= end)
 			break;
 
-		if (*pos == 'S') {
-			pos++;
+		code = *pos++;
+		switch (code) {
+		case '\\':
+			fputc('\\', out);
+			break;
+		case 's':
+			fputs(uts.sysname, out);
+			break;
+		case 'n':
+			fputs(uts.nodename, out);
+			break;
+		case 'r':
+			fputs(uts.release, out);
+			break;
+		case 'v':
+			fputs(uts.version, out);
+			break;
+		case 'm':
+			fputs(uts.machine, out);
+			break;
+		case 'o':
+			fputs(uts.domainname[0] ? uts.domainname : "(none)", out);
+			break;
+		case 'd':
+			fputs(datebuf, out);
+			break;
+		case 't':
+			fputs(timebuf, out);
+			break;
+		case 'l':
+			fputs(tty_short, out);
+			break;
+		case 'S':
 			expand_os_release(&pos, end, out);
-			continue;
-		}
-		if (*pos == 'e') {
-			pos++;
+			break;
+		case 'e':
 			expand_color(&pos, end, out);
-			continue;
+			break;
+		case '4':
+			if (!book)
+				book = issue_network_gen_book();
+			expand_ip(&pos, end, out, book, false);
+			break;
+		case '6':
+			if (!book)
+				book = issue_network_gen_book();
+			expand_ip(&pos, end, out, book, true);
+			break;
+		case 'a':
+			if (!book)
+				book = issue_network_gen_book();
+			expand_all_ip(&pos, end, out, book, true);
+			break;
+		case 'A':
+			if (!book)
+				book = issue_network_gen_book();
+			expand_all_ip(&pos, end, out, book, false);
+			break;
+		default:
+			break;
 		}
-
-		if ((unsigned char)*pos < 128 && escape_val[(unsigned char)*pos])
-			fputs(escape_val[(unsigned char)*pos], out);
-		pos++;
 	}
-
+	issue_network_free_book(book);
 	fclose(out);
-	if (olen > 0)
-		tsm_vte_input(vte, obuf, olen);
-	free(obuf);
+	*out_len = olen;
+	return obuf;
 }
 
-void kmscon_issue_write(struct tsm_vte *vte, struct kmscon_pty *pty, const char *search_path)
+/**
+ * kmscon_issue_get_buffer
+ * Allocate and return a buffer containing the expanded issue text with the given pty name.
+ * The buffer must be freed by the caller.
+ */
+char *kmscon_issue_get_buffer(const char *search_path, char *pty_name, size_t *len)
 {
 	char *raw;
 	size_t raw_len;
+	char *out;
+	size_t out_len;
 
 	if (!search_path)
 		search_path = ISSUE_DEFAULT_PATH;
 
 	raw = collect_issue_text(search_path, &raw_len);
 	if (!raw)
-		return;
+		return NULL;
 
-	expand_issue(raw, raw_len, vte, pty);
+	out = expand_issue(raw, raw_len, pty_name, &out_len);
 	free(raw);
+	*len = out_len;
+	return out;
 }

@@ -69,11 +69,31 @@ static void uxkb_log(struct xkb_context *context, enum xkb_log_level level, cons
 	log_submit(LOG_DEFAULT, sev, format, args);
 }
 
-int uxkb_desc_init(struct input *input, const char *model, const char *layout, const char *variant,
-		   const char *options, const char *locale, const char *keymap,
-		   const char *compose_file, size_t compose_file_len)
+static struct xkb_keymap *uxkb_layout_from_file(struct input *input, const char *file)
 {
-	int ret;
+	struct xkb_keymap *keymap;
+	FILE *keymap_file;
+
+	keymap_file = fopen(file, "r");
+	if (!keymap_file) {
+		log_error("cannot open keymap file %s", file);
+		return NULL;
+	}
+
+	keymap = xkb_keymap_new_from_file(input->ctx, keymap_file, XKB_KEYMAP_FORMAT_TEXT_V1,
+					  XKB_KEYMAP_COMPILE_NO_FLAGS);
+	fclose(keymap_file);
+	if (!keymap) {
+		log_error("cannot create keymap from file %s", file);
+		return NULL;
+	}
+	return keymap;
+}
+
+int uxkb_layout_init(struct input *input, const char *model, const char *layout,
+		     const char *variant, const char *options, const char *keymap_file)
+{
+	int ret = 0;
 	struct xkb_rule_names rmlvo = {
 		.rules = "evdev",
 		.model = model,
@@ -97,19 +117,12 @@ int uxkb_desc_init(struct input *input, const char *model, const char *layout, c
 	xkb_context_set_log_fn(input->ctx, uxkb_log);
 
 	/* If a complete keymap file was given, first try that. */
-	if (keymap && *keymap) {
-		input->keymap = xkb_keymap_new_from_string(input->ctx, keymap,
-							   XKB_KEYMAP_FORMAT_TEXT_V1, 0);
-		if (input->keymap) {
-			log_debug("new keyboard description from memory");
-		} else {
-			log_warn("cannot parse keymap, reverting to rmlvo");
-		}
-	}
+	if (keymap_file)
+		input->keymap = uxkb_layout_from_file(input, keymap_file);
 
-	if (!input->keymap) {
-		input->keymap = xkb_keymap_new_from_names(input->ctx, &rmlvo, 0);
-	}
+	if (!input->keymap)
+		input->keymap =
+			xkb_keymap_new_from_names(input->ctx, &rmlvo, XKB_KEYMAP_COMPILE_NO_FLAGS);
 
 	if (!input->keymap) {
 		log_warn("failed to create keymap (%s, %s, %s, %s), "
@@ -140,14 +153,29 @@ int uxkb_desc_init(struct input *input, const char *model, const char *layout, c
 		log_debug("new keyboard description (%s, %s, %s, %s)", model, layout, variant,
 			  options);
 	}
+	return 0;
+err_ctx:
+	xkb_context_unref(input->ctx);
+	return ret;
+}
 
-	if (compose_file && *compose_file) {
-		input->compose_table = xkb_compose_table_new_from_buffer(
-			input->ctx, compose_file, compose_file_len, locale,
-			XKB_COMPOSE_FORMAT_TEXT_V1, 0);
+void uxkb_compose_table_init(struct input *input, const char *compose_file, const char *locale)
+{
+	FILE *compose;
 
+	if (compose_file) {
+		compose = fopen(compose_file, "r");
+		if (!compose) {
+			log_error("cannot open compose file %s", compose_file);
+			return;
+		}
+		input->compose_table = xkb_compose_table_new_from_file(
+			input->ctx, compose, locale, XKB_COMPOSE_FORMAT_TEXT_V1,
+			XKB_COMPOSE_COMPILE_NO_FLAGS);
+
+		fclose(compose);
 		if (input->compose_table) {
-			log_debug("new compose table from memory");
+			log_debug("new compose table from file %s", compose_file);
 		} else {
 			log_warn("cannot parse compose table, "
 				 "reverting to default");
@@ -155,25 +183,27 @@ int uxkb_desc_init(struct input *input, const char *model, const char *layout, c
 	}
 
 	if (!input->compose_table) {
-		input->compose_table = xkb_compose_table_new_from_locale(input->ctx, locale, 0);
+		input->compose_table = xkb_compose_table_new_from_locale(
+			input->ctx, locale, XKB_COMPOSE_COMPILE_NO_FLAGS);
 		if (!input->compose_table) {
 			log_warn("failed to create XKB default compose "
 				 "table, disabling compose support");
 		}
 	}
-
-	return 0;
-
-err_ctx:
-	xkb_context_unref(input->ctx);
-	return ret;
 }
 
-void uxkb_desc_destroy(struct input *input)
+void uxkb_compose_table_destroy(struct input *input)
 {
 	xkb_compose_table_unref(input->compose_table);
+	input->compose_table = NULL;
+}
+
+void uxkb_layout_destroy(struct input *input)
+{
 	xkb_keymap_unref(input->keymap);
 	xkb_context_unref(input->ctx);
+	input->keymap = NULL;
+	input->ctx = NULL;
 }
 
 static void timer_event(struct ev_timer *timer, uint64_t num, void *data)
@@ -218,6 +248,9 @@ void uxkb_dev_destroy(struct input_dev *dev)
 	xkb_compose_state_unref(dev->compose_state);
 	xkb_state_unref(dev->state);
 	ev_eloop_rm_timer(dev->repeat_timer);
+	dev->compose_state = NULL;
+	dev->state = NULL;
+	dev->repeat_timer = NULL;
 }
 
 #define EVDEV_KEYCODE_OFFSET 8
@@ -511,6 +544,14 @@ int uxkb_dev_process(struct input_dev *dev, uint16_t key_state, uint16_t code)
 	shl_hook_call(dev->input->key_hook, dev->input, &dev->event);
 
 	return 0;
+}
+
+unsigned int uxkb_dev_get_mods(struct input_dev *dev)
+{
+	if (!dev || !dev->state)
+		return 0;
+
+	return xkb_state_serialize_mods(dev->state, XKB_STATE_MODS_EFFECTIVE);
 }
 
 void uxkb_dev_wake_up(struct input_dev *dev)

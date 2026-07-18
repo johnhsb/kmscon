@@ -28,8 +28,8 @@
  * global parameters can be accessed via this header.
  */
 
-#ifndef KMSCON_MAIN_H
-#define KMSCON_MAIN_H
+#ifndef KMSCON_CONFIG_H
+#define KMSCON_CONFIG_H
 
 #include <libtsm.h>
 #include <stdbool.h>
@@ -79,18 +79,22 @@ struct kmscon_conf_t {
 	unsigned int session_max;
 	/* allow keyboard session control */
 	bool session_control;
-	/* run terminal session */
-	bool terminal_session;
 
 	/* Terminal Options */
 	/* display /etc/issue before login prompt */
 	bool issue;
 	/* colon-separated issue search path */
 	char *issue_path;
+	/* asciicast animation to play after opening the terminal session */
+	char *asciicast;
+	/* loop asciicast animation */
+	bool asciicast_loop;
 	/* custom login process */
 	bool login;
 	/* argv for login process */
 	char **argv;
+	/* when the login process exits, exit kmscon */
+	bool oneshot;
 	/* TERM value */
 	char *term;
 	/* reset environment */
@@ -101,6 +105,8 @@ struct kmscon_conf_t {
 	unsigned int sb_size;
 	/* enable bell forwarding */
 	bool bell;
+	/* enable cursor and text blinking */
+	bool blink;
 
 	/* Input Options */
 	/* input KBD model */
@@ -145,8 +151,6 @@ struct kmscon_conf_t {
 	struct conf_grab *grab_session_next;
 	/* session-prev grab */
 	struct conf_grab *grab_session_prev;
-	/* session-dummy grab */
-	struct conf_grab *grab_session_dummy;
 	/* session-close grab */
 	struct conf_grab *grab_session_close;
 	/* terminal-new grab */
@@ -202,4 +206,4 @@ void kmscon_conf_free(struct conf_ctx *ctx);
 int kmscon_conf_load_main(struct conf_ctx *ctx, int argc, char **argv);
 int kmscon_conf_load_seat(struct conf_ctx *ctx, const struct conf_ctx *main, const char *seat);
 
-#endif /* KMSCON_MAIN_H */
+#endif /* KMSCON_CONFIG_H */
